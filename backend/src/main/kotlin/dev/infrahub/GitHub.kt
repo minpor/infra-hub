@@ -40,6 +40,9 @@ fun limitedBody(limit: Int): HttpResponse.BodyHandler<ByteArray> = HttpResponse.
 }
 
 class RepositoryFailure(message: String) : RuntimeException(message)
+data class RepositoryBranch(val name: String, val sha: String)
+data class RepositoryBranches(val defaultBranch: String, val branches: List<RepositoryBranch>, val hasMore: Boolean)
+data class RepositoryWriteAccess(val contentsWrite: Boolean, val workflowsWrite: Boolean, val settingsUrl: String, val appName: String)
 
 /** Fixed GitHub hosts, no automatic redirects and no response bodies in errors/logs. */
 @Component
@@ -107,7 +110,7 @@ class GitHub(
         }
     }
 
-    private fun token(repository: String, write: Boolean = false): String? {
+    private fun token(repository: String, write: Boolean = false, workflows: Boolean = false): String? {
         if (!configured()) {
             if (write) throw RepositoryFailure("Для сохранения YAML настройте GitHub App с правом Contents: read and write.")
             return null
@@ -119,8 +122,39 @@ class GitHub(
         val jwt = jwt()
         val actual = request("/repos/$repository/installation", jwt)["id"].asText()
         if (actual != installationId) throw RepositoryFailure("Репозиторий не входит в настроенную установку GitHub App.")
+        val permissions = mutableMapOf("contents" to if (write) "write" else "read")
+        if (workflows) permissions["workflows"] = "write"
         return request("/app/installations/$installationId/access_tokens", jwt,
-            json.writeValueAsString(mapOf("repositories" to listOf(repository.substringAfter('/')), "permissions" to mapOf("contents" to if (write) "write" else "read"))))["token"].asText()
+            json.writeValueAsString(mapOf("repositories" to listOf(repository.substringAfter('/')), "permissions" to permissions)))["token"].asText()
+    }
+
+    fun branches(url: String, page: Int): RepositoryBranches {
+        require(page in 1..1000) { "Invalid branch page" }
+        val repository = repositoryName(url)
+        val access = token(repository)
+        val metadata = request("/repos/$repository", access)
+        val nodes = request("/repos/$repository/branches?per_page=100&page=$page", access)
+        require(nodes.isArray) { "Invalid GitHub branches response" }
+        val branches = nodes.map { node ->
+            val name = node.path("name").asText()
+            val sha = node.path("commit").path("sha").asText()
+            require(name.isNotBlank() && sha.matches(Regex("[0-9a-f]{40}"))) { "Invalid GitHub branch" }
+            RepositoryBranch(name, sha)
+        }
+        return RepositoryBranches(metadata.path("default_branch").asText(), branches, branches.size == 100)
+    }
+
+    fun writeAccess(url: String): RepositoryWriteAccess {
+        if (!configured()) return RepositoryWriteAccess(false, false, "https://github.com/settings/apps", "GitHub App")
+        val repository = repositoryName(url)
+        val access = jwt()
+        val installation = request("/repos/$repository/installation", access)
+        require(installation.path("id").asText() == installationId)
+        val app = request("/app", access)
+        val slug = app.path("slug").asText()
+        require(slug.matches(Regex("[A-Za-z0-9_-]+")))
+        return RepositoryWriteAccess(installation.path("permissions").path("contents").asText() == "write",
+            installation.path("permissions").path("workflows").asText() == "write", "https://github.com/settings/apps/$slug/permissions", app.path("name").asText())
     }
 
     fun resolve(url: String, ref: String, command: String): SourceSnapshot {
@@ -145,22 +179,42 @@ class GitHub(
     fun saveYaml(source: SourceSnapshot, path: String, yaml: String): String {
         DeploymentYaml().path(path)
         require(yaml.toByteArray().size <= 65536)
+        return saveFile(source, path, yaml)
+    }
+
+    fun sourceFiles(source: SourceSnapshot): Pair<List<String>, Boolean> {
+        val node = request("/repos/${source.repository}/git/trees/${source.sha}?recursive=1", token(source.repository))
+        val paths = node.path("tree").filter { it.path("type").asText() == "blob" && it.path("mode").asText() != "120000" }
+            .map { it.path("path").asText() }.filter { runCatching { RepositorySourcePaths.validate(it) }.isSuccess }.sorted()
+        return paths.take(1000) to (node.path("truncated").asBoolean() || paths.size > 1000)
+    }
+
+    fun saveFile(source: SourceSnapshot, path: String, content: String, create: Boolean = false): String {
+        RepositorySourcePaths.validate(path)
+        require(content.toByteArray().size <= 128 * 1024 && '\u0000' !in content) { "Source file is limited to 128 KiB" }
+        require(source.ref != "HEAD" && !source.ref.matches(Regex("[a-fA-F0-9]{40}"))) { "Choose a branch name to save files" }
         val encodedRef = URLEncoder.encode(source.ref, Charsets.UTF_8).replace("+", "%20")
-        val access = token(source.repository, write = true)!!
-        // A tag/SHA can be viewed, but saving must name an existing branch explicitly.
+        val access = token(source.repository, write = true, workflows = path.startsWith(".github/workflows/"))!!
         val branch = request("/repos/${source.repository}/git/ref/heads/$encodedRef", access)
         if (branch.path("object").path("sha").asText() != source.sha) throw Conflict("Ветка изменилась. Загрузите YAML заново; ваши правки остаются в редакторе.")
-        val file = request("/repos/${source.repository}/contents/$path?ref=${source.sha}", access)
-        val body = json.writeValueAsString(mapOf(
-            "message" to "Update $path via Infra Hub", "branch" to source.ref,
-            "sha" to file.path("sha").asText(), "content" to Base64.getEncoder().encodeToString(yaml.toByteArray())
-        ))
-        val (status, bytes) = http.put(URI.create("https://api.github.com/repos/${source.repository}/contents/$path"), access, body)
+        val (fileStatus, fileBytes) = http.get(URI.create("https://api.github.com/repos/${source.repository}/contents/$path?ref=${source.sha}"), access)
+        if (create && fileStatus == 200) throw Conflict("Файл уже существует. Откройте его для редактирования.")
+        if (!create && fileStatus == 404) throw Conflict("Файл удалён. Обновите список файлов; ваши правки остаются в редакторе.")
+        if (!(fileStatus == 200 || create && fileStatus == 404)) throw RepositoryFailure("Не удалось проверить файл. Проверьте доступ GitHub App к репозиторию.")
+        val body = mutableMapOf<String, Any>("message" to "${if (create) "Create" else "Update"} $path via Infra Hub", "branch" to source.ref,
+            "content" to Base64.getEncoder().encodeToString(content.toByteArray()))
+        if (!create) {
+            val file = json.readTree(fileBytes)
+            require(file.path("type").asText("file") == "file" && !file.has("target") && file.path("sha").asText().isNotBlank()) { "Only regular source files can be edited" }
+            body["sha"] = file.path("sha").asText()
+        }
+        val (status, bytes) = http.put(URI.create("https://api.github.com/repos/${source.repository}/contents/$path"), access, json.writeValueAsString(body))
         when (status) {
-            200 -> return json.readTree(bytes).path("commit").path("sha").asText().also { require(it.matches(Regex("[0-9a-f]{40}"))) }
+            200, 201 -> return json.readTree(bytes).path("commit").path("sha").asText().also { require(it.matches(Regex("[0-9a-f]{40}"))) }
             409 -> throw Conflict("Файл изменился. Загрузите YAML заново; ваши правки остаются в редакторе.")
-            401, 403, 404, 422 -> throw RepositoryFailure("Не удалось сохранить YAML. Проверьте право GitHub App Contents: read and write и правила защиты ветки.")
-            else -> throw RepositoryFailure("Не удалось сохранить YAML (HTTP $status). Проверьте ветку перед повтором.")
+            422 -> if (create) throw Conflict("Не удалось создать файл: он мог появиться в ветке. Обновите список; черновик сохранён в редакторе.") else throw RepositoryFailure("Не удалось сохранить файл. Проверьте права GitHub App Contents / Workflows и защиту ветки.")
+            401, 403, 404 -> throw RepositoryFailure("Не удалось сохранить файл. Проверьте права GitHub App Contents / Workflows и защиту ветки.")
+            else -> throw RepositoryFailure("Не удалось сохранить файл (HTTP $status). Проверьте ветку перед повтором.")
         }
     }
 

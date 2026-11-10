@@ -14,7 +14,7 @@ The software does not require a subscription or purchased CI minutes. You provid
 
 | Area | Implemented behavior |
 | --- | --- |
-| Projects | GitHub repository links, search, build history and exact commit snapshots |
+| Projects | GitHub branches, build-only / DEV / PROD runs, editable YAML/scripts and new source files |
 | Queue | PostgreSQL-backed jobs, idempotent enqueue, execution leases, cancellation and interrupted-job recovery |
 | Builds | Separate worker; disposable Java 21 / Node.js containers on a rootless Docker daemon |
 | Visibility | Persisted steps/logs, build/deployment minutes, queue wait and per-project runner CPU/RAM settings and dependency cache state |
@@ -28,6 +28,17 @@ The software does not require a subscription or purchased CI minutes. You provid
 General publication supports executable JARs. Existing Compose applications can use an advanced adapter with specific layout and health-check assumptions. Android signing/publication and several build helpers are currently **Aukni-specific integrations**, rather than a general mobile CI service. See [capabilities and limits](docs/capabilities.md).
 
 Use [repository-owned deployment YAML](docs/deployment-yaml.md) for per-project build, deploy, verify and rollback steps. Attach multiple files for different services/environments; image publication is optional.
+
+## Edit YAML and scripts
+
+1. Choose **Open project → Settings & scripts**, then the DEV/PROD web or Android pipeline.
+2. Select a repository YAML or script and click **Edit file**. Validate it, then **Save to the branch** shown in the editor. Saving creates a GitHub commit; active automation may process that commit.
+3. Choose **+ New file** for Shell, Python, Node.js or deployment YAML templates. Enter a repository-relative path, for example `.infra-hub/scripts/custom.sh`, write the contents, validate and create it. **Open repository file** lists existing scripts/YAML and also accepts an exact path.
+4. Shared builder/deployer sources have **Copy to project**. Edit and save the copy in your repository. For a saved repository script, **Use for build** prepares its invocation. For native pipelines, **Pipeline settings → Edit settings** changes the build command and artifact path; for example, call your script with `bash .infra-hub/scripts/custom.sh`.
+
+Creating a file does not add an execution step by itself. Build scripts run in the repository sandbox. YAML deployment commands run in the configured directory on the SSH target; repository files are not automatically uploaded there. Use inline deployment commands or arrange delivery of any remote script before invoking it. Platform copies do not replace the shared native deployment adapter automatically.
+
+Repository saves require a configured GitHub App with **Contents: write**; editing `.github/workflows/` also requires **Workflows: write**. The editor shows the installed app's current permissions and links to its settings. Permission changes need the owner's approval. Concurrent file changes, existing-file creation and stale native build settings are rejected while keeping the draft. Only source paths are accepted; previews and edits are bounded to 128 KiB. See [deployment YAML](docs/deployment-yaml.md) and [GitHub's file API permissions](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents).
 
 ## How it fits together
 

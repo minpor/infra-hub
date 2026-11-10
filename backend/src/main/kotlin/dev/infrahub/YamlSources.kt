@@ -5,7 +5,7 @@ import org.springframework.stereotype.Service
 import org.springframework.web.bind.annotation.*
 import java.util.UUID
 
-data class YamlBinding(val id: UUID, val applicationId: UUID, val ref: String, val path: String, val expectedSha: String, val enabled: Boolean = false)
+data class YamlBinding(val id: UUID, val applicationId: UUID, val ref: String, val path: String, val expectedSha: String, val enabled: Boolean = false, val environment: String? = null)
 data class YamlPreviewRequest(val applicationId: UUID, val ref: String, val path: String)
 data class YamlPreview(val sha: String, val path: String, val sha256: String, val yaml: String, val definition: DeploymentDefinition)
 data class YamlDocument(val sha: String, val path: String, val sha256: String, val yaml: String)

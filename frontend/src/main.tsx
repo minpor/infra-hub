@@ -9,6 +9,7 @@ import { minutes } from './i18n'
 import { Servers } from './Servers'
 import { Applications } from './Applications'
 import { Settings } from './Settings'
+import { ProjectLaunch } from './ProjectLaunch'
 
 const labels: Record<Status, string> = { QUEUED: 'В очереди', RUNNING: 'Выполняется', CANCEL_REQUESTED: 'Отменяется', SUCCEEDED: 'Успешно', FAILED: 'Ошибка', CANCELLED: 'Отменена', INTERRUPTED: 'Прервана' }
 const date = (value: string) => new Date(value).toLocaleString(locale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -85,17 +86,12 @@ function App() {
   const [repositoryUrl, setRepositoryUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [launchProject, setLaunchProject] = useState<Project | null>(null)
-  const [sourceRef, setSourceRef] = useState('HEAD')
-  const [buildCommand, setBuildCommand] = useState('sh ./gradlew --no-daemon build')
-  const [artifactPath, setArtifactPath] = useState('')
-  const [appConfigured, setAppConfigured] = useState(false)
   const [filter, setFilter] = useState('')
   const requests = useRef(new Map<string, string>())
   const nameInput = useRef<HTMLInputElement>(null)
   useEffect(() => { if (formOpen) nameInput.current?.focus() }, [formOpen])
   useEffect(() => {
     let stopped = false
-    api<{ appConfigured: boolean }>('/github').then(value => setAppConfigured(value.appConfigured)).catch(() => {})
     api<{ login: string }>('/session').then(() => { if (!stopped) setAuthenticated(true) }).catch(error => {
       if (!stopped) setAuthenticated(error instanceof ApiError && error.status === 404)
     })
@@ -142,19 +138,10 @@ function App() {
         try { await api<Project>('/projects', { name, repositoryUrl: repositoryUrl || null }); setName(''); setRepositoryUrl(''); setFormOpen(false); await refresh() }
         catch (error) { setActionError((error as Error).message) } finally { setBusy(false) }
       }}><h2>{t("Новый проект")}</h2><label>{t("Название")}<input ref={nameInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} required placeholder={t("Мой первый проект")}/></label><label>{t("Репозиторий GitHub")} <span className="muted">{t("· необязательно")}</span><input type="text" value={repositoryUrl} onChange={e => setRepositoryUrl(e.target.value)} maxLength={240} placeholder="https://github.com/owner/repository"/></label><p className="muted">{t("Публичные репозитории доступны сразу. Для приватных нужен доступ GitHub App к выбранному репозиторию.")}</p><div className="actions"><button disabled={busy}>{t("Создать проект")}</button><button type="button" className="secondary" onClick={() => setFormOpen(false)}>{t("Закрыть")}</button></div></form>}
-      {launchProject && <form className="panel project-form" onSubmit={e => { e.preventDefault(); void run(launchProject.id, sourceRef, buildCommand, artifactPath) }}>
-        <h2>{t("Сборка:")} {launchProject.name}</h2>
-        <label>{t("Ветка, тег или commit")}<input value={sourceRef} onChange={e => setSourceRef(e.target.value)} required maxLength={200}/></label>
-        <label>{t("Команда сборки")}<textarea value={buildCommand} onChange={e => setBuildCommand(e.target.value)} required maxLength={2000} rows={3}/></label>
-        <p className="muted">{t("Java 21 · Node 22 · до 40 минут. CPU и память задаются в настройках раннера.")}</p>
-        <label>{t("JAR для Docker-образа")} <span className="muted">{t("· необязательно")}</span><input value={artifactPath} onChange={e => setArtifactPath(e.target.value)} maxLength={300} placeholder="backend/build/libs/app.jar"/></label>
-        <p className="muted">{t("Точный путь от корня репозитория, без маски. При заполнении образ будет опубликован в настроенный registry.")}</p>
-        {!appConfigured && <p className="note">{t("GitHub App ещё не настроен: доступны только публичные репозитории.")}</p>}
-        <div className="actions"><button disabled={busy}>{busy ? t("Получаем commit…") : t("Поставить в очередь")}</button><button type="button" className="secondary" disabled={busy} onClick={() => setLaunchProject(null)}>{t("Закрыть")}</button></div>
-      </form>}
+      {launchProject && <ProjectLaunch key={launchProject.id} project={launchProject} previous={builds.find(b => b.projectId === launchProject.id && b.source && !b.source.yamlRecipe)?.source} onClose={() => setLaunchProject(null)} onStarted={async build => { setLaunchProject(null); setSelected(build.id); await refresh() }}/>}
       <div className="workspace"><div>
         <section id="projects" className="panel"><div className="panel-heading"><h2>{t("Ваши проекты")}</h2><span className="counter">{projects.length}</span></div><input className="search" aria-label={t("Поиск проектов")} placeholder={t("Найти проект…")} value={filter} onChange={e => setFilter(e.target.value)}/>
-          {!loaded ? <p className="empty">{connectionError ? t("Ждём подключения к backend.") : t("Загружаем проекты…")}</p> : projects.length === 0 ? <div className="empty"><span className="empty-mark">＋</span><h3>{t("Начните с первого проекта")}</h3><p>{t("Создайте проект и запустите проверочную сборку.")}<br/>{t("Результат и логи сохранятся после перезапуска.")}</p><button onClick={() => setFormOpen(true)}>{t("Создать проект")}</button></div> : projects.filter(p => p.name.toLowerCase().includes(filter.toLowerCase())).map(p => <article className="project-row" key={p.id}><div className="project-icon" aria-hidden="true">{p.name.slice(0, 1).toUpperCase()}</div><div className="project-info"><h3>{p.name}</h3><p className="muted">{p.repositoryUrl || t("Без подключения GitHub")}</p></div><button className="secondary" disabled={busy || !!connectionError} onClick={() => { if (p.repositoryUrl) { const previous = builds.find(b => b.projectId === p.id && b.source && !b.source.yamlRecipe)?.source; setLaunchProject(p); setSourceRef(previous?.ref || 'HEAD'); setBuildCommand(previous?.command || 'sh ./gradlew --no-daemon --max-workers=4 build'); setArtifactPath(previous?.artifactPath || '') } else { void run(p.id) } }}>{p.repositoryUrl ? t("Собрать репозиторий") : t("Запустить проверку")}</button></article>)}
+          {!loaded ? <p className="empty">{connectionError ? t("Ждём подключения к backend.") : t("Загружаем проекты…")}</p> : projects.length === 0 ? <div className="empty"><span className="empty-mark">＋</span><h3>{t("Начните с первого проекта")}</h3><p>{t("Создайте проект и запустите проверочную сборку.")}<br/>{t("Результат и логи сохранятся после перезапуска.")}</p><button onClick={() => setFormOpen(true)}>{t("Создать проект")}</button></div> : projects.filter(p => p.name.toLowerCase().includes(filter.toLowerCase())).map(p => <article className="project-row" key={p.id}><div className="project-icon" aria-hidden="true">{p.name.slice(0, 1).toUpperCase()}</div><div className="project-info"><h3>{p.name}</h3><p className="muted">{p.repositoryUrl || t("Без подключения GitHub")}</p></div><button className="secondary" disabled={busy || !!connectionError} onClick={() => { if (p.repositoryUrl) { setLaunchProject(p) } else { void run(p.id) } }}>{p.repositoryUrl ? t("Открыть проект") : t("Запустить проверку")}</button></article>)}
           {loaded && projects.length > 0 && !projects.some(p => p.name.toLowerCase().includes(filter.toLowerCase())) && <p className="empty">{t("Проекты не найдены.")}</p>}
         </section>
         <section id="builds" className="panel"><div className="panel-heading"><h2>{t("Последние сборки")}</h2><span className="muted">{t("до 100 записей")}</span></div>{builds.length === 0 ? <p className="empty">{t("Здесь появятся очередь и история запусков.")}</p> : <ul className="build-list">{builds.map(b => <li key={b.id}><button className={`build-row ${selected === b.id ? 'selected' : ''}`} onClick={() => setSelected(b.id)} aria-pressed={selected === b.id}><div><strong>{projects.find(p => p.id === b.projectId)?.name || t("Проект")}</strong><span className="build-meta">{b.id.slice(0, 8)} · {date(b.createdAt)} · {t('Выполнение')}: {minutes(b.startedAt ? Math.max(0, Date.parse(b.finishedAt || new Date().toISOString()) - Date.parse(b.startedAt)) : null)}</span></div><Badge status={b.status}/></button></li>)}</ul>}</section>

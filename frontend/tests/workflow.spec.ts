@@ -36,8 +36,12 @@ test('repository command and ref are submitted and access errors stay visible', 
   await page.getByRole('button', { name: 'Создать проект', exact: true }).click()
   const row = page.locator('article').filter({ hasText: name })
   await expect(row).toContainText('https://github.com/minpor/aukni')
-  await row.getByRole('button', { name: 'Собрать репозиторий' }).click()
+  await page.route('**/api/projects/*/branches', route => route.fulfill({ json: { defaultBranch: 'main', branches: [{ name: 'main' }, { name: 'dev' }], hasMore: false } }))
+  await row.getByRole('button', { name: 'Открыть проект' }).click()
+  await page.getByRole('tab', { name: 'Запуск', exact: true }).click()
+  await page.getByRole('button', { name: 'Ввести вручную' }).click()
   await page.getByLabel('Ветка, тег или commit').fill('dev')
+  await page.getByText('Настройки сборки', { exact: true }).click()
   await page.getByLabel('Команда сборки').fill('cd backend && sh ./gradlew --no-daemon build')
   await page.getByLabel('JAR для Docker-образа').fill('backend/build/libs/app.jar')
   await page.route('**/api/projects/*/builds', async route => {

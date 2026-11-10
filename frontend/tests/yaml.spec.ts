@@ -4,6 +4,7 @@ test('attach two YAML files, preview exact SHA and explicitly release a paused b
   const app = { id: 'app-yaml', projectId: 'project-yaml', serverId: 'server-yaml', name: 'Generic app', kind: 'SCRIPT', configuration: {}, environmentKeys: [], currentDeployment: null }
   let pipelines: object[] = []
   let released = false
+  await page.route('**/api/projects/*/branches', route => route.fulfill({ json: { defaultBranch: 'main', branches: [{ name: 'main' }, { name: 'dev' }], hasMore: false } }))
   await page.route('**/api/applications', route => route.fulfill({ json: [app] }))
   await page.route('**/api/projects', route => route.fulfill({ json: [{ id: app.projectId, name: 'Project' }] }))
   await page.route('**/api/servers', route => route.fulfill({ json: [{ id: app.serverId, name: 'Target', status: 'SSH_ONLY' }] }))
@@ -19,7 +20,8 @@ test('attach two YAML files, preview exact SHA and explicitly release a paused b
     const input = route.request().postDataJSON()
     expect(input.expectedSha).toBe('a'.repeat(40))
     expect(input.enabled).toBe(false)
-    const pipeline = { id: input.id, application_id: app.id, ref: input.ref, config_path: input.path, enabled: false, build_id: null }
+    expect(input.environment).toBe(input.path.includes('dev') ? 'dev' : 'prod')
+    const pipeline = { id: input.id, application_id: app.id, ref: input.ref, environment: input.environment, config_path: input.path, enabled: false, build_id: null }
     pipelines.push(pipeline)
     await route.fulfill({ json: pipeline })
   })
@@ -34,6 +36,7 @@ test('attach two YAML files, preview exact SHA and explicitly release a paused b
   for (const path of ['.infra-hub/dev.yaml', '.infra-hub/production.yaml']) {
     await panel.getByRole('button', { name: 'Attach YAML', exact: true }).click()
     await panel.getByLabel('YAML application').selectOption(app.id)
+    await panel.getByRole('combobox', { name: 'Environment', exact: true }).selectOption(path.includes('dev') ? 'dev' : 'prod')
     await panel.getByLabel('Repository YAML path').fill(path)
     await panel.getByRole('button', { name: 'Validate YAML' }).click()
     await expect(panel.locator('.yaml-preview')).toContainText('aaaaaaaaaaaa')

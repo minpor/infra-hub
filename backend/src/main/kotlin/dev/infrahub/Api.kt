@@ -24,6 +24,9 @@ class Api(private val store: QueueStore, private val environment: Environment, p
     @GetMapping("/health") fun health() = mapOf("status" to "UP", "mode" to if (environment.acceptsProfiles(Profiles.of("production"))) "PRODUCTION" else "LOCAL_DEVELOPMENT")
     @GetMapping("/overview") fun overview() = store.overview()
     @GetMapping("/projects") fun projects() = store.projects()
+    @GetMapping("/projects/{id}/branches")
+    fun branches(@PathVariable id: UUID, @RequestParam(defaultValue = "1") page: Int): RepositoryBranches =
+        github.branches(requireNotNull(store.project(id).repositoryUrl) { "A GitHub repository is required" }, page)
     @PostMapping("/projects") @ResponseStatus(HttpStatus.CREATED)
     fun createProject(@Valid @RequestBody input: NewProject) = store.createProject(input)
     @GetMapping("/builds") fun builds() = store.builds()

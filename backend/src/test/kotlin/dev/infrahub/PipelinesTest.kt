@@ -16,7 +16,7 @@ import java.time.Duration
 import java.util.UUID
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = ["hub.scheduling-enabled=false", "spring.datasource.url=\${HUB_TEST_DATABASE_URL}"])
-class PipelinesTest @Autowired constructor(private val pipelines: PipelineService, private val apps: DeploymentStore, private val queue: QueueStore, private val jdbc: JdbcTemplate) {
+class PipelinesTest @Autowired constructor(private val pipelines: PipelineService, private val apps: DeploymentStore, private val queue: QueueStore, private val jdbc: JdbcTemplate, private val configuration: PipelineConfigurationService, private val editing: RepositorySourceEditing) {
     @MockitoBean lateinit var github: GitHub
     private lateinit var app: HubApplication
     private lateinit var project: Project
@@ -48,6 +48,88 @@ class PipelinesTest @Autowired constructor(private val pipelines: PipelineServic
         jdbc.update("UPDATE builds SET status='SUCCEEDED',image_reference='image@sha256:abc',artifact_sha256=repeat('a',64),artifact_size=1 WHERE id=?", b.id)
         assertThatThrownBy { apps.enqueue(app.id, NewDeployment(UUID.randomUUID(), b.id)) }.isInstanceOf(IllegalArgumentException::class.java)
     }
+    @Test fun `configuration inspection shows actual commands and platform scripts without starting work or exposing environment values`() {
+        val selected = apps.create(NewApplication(UUID.randomUUID(), project.id, app.serverId, "Inspect", 18091, 8080, environment = mapOf("TOKEN" to "private-value")))
+        val id = UUID.randomUUID()
+        val command = "python3 /opt/hub/build-aukni-web.py"
+        pipelines.create(NewPipeline(id, selected.id, "main", command, "app.jar", environment = "prod"))
+        val view = configuration.view(id)
+        assertThat(view.repositoryYaml).isNull()
+        assertThat(view.yaml).contains(command, "environment: prod", "TOKEN").doesNotContain("private-value")
+        assertThat(view.files).contains(ConfigurationFile(".github/workflows/ci.yml", "REPOSITORY", "build"))
+        val script = configuration.source(id, "BUILDER", "/opt/hub/build-aukni-web.py", null)
+        assertThat(script.content).contains("workflow['jobs']['landing']['steps']", "build','shadowJar")
+        assertThat(script.sha256).hasSize(64)
+        assertThat(configuration.source(id, "DEPLOYER", "deploy/apply.py", null).content).contains("import")
+        assertThat(queue.builds()).isEmpty()
+        assertThat(apps.list()).isEmpty()
+    }
+
+    @Test fun `repository source preview stays on the selected snapshot and rejects host paths and non source files`() {
+        val id = UUID.randomUUID()
+        pipelines.create(NewPipeline(id, app.id, "main", "build", "app.jar"))
+        val source = SourceSnapshot("owner/repo", "main", "a".repeat(40), ":")
+        `when`(github.resolve("https://github.com/owner/repo", "main", ":")).thenReturn(source)
+        `when`(github.file(source, ".github/workflows/ci.yml")).thenReturn("run: bash deploy/check.sh\n".toByteArray())
+        val first = configuration.source(id, "REPOSITORY", ".github/workflows/ci.yml", null)
+        assertThat(first.sha).isEqualTo(source.sha)
+        assertThat(first.references).contains(ConfigurationFile("deploy/check.sh", "REPOSITORY", "source"))
+        `when`(github.resolve("https://github.com/owner/repo", "main", ":")).thenThrow(RepositoryFailure("branch moved"))
+        `when`(github.file(source, "deploy/check.sh")).thenReturn("printf verified\n".toByteArray())
+        assertThat(configuration.source(id, "REPOSITORY", "deploy/check.sh", first.sha).content).isEqualTo("printf verified\n")
+        listOf("../secret.py", "/etc/secret.py", ".env", "folder/../script.sh").forEach { path ->
+            assertThatThrownBy { configuration.source(id, "REPOSITORY", path, null) }.isInstanceOf(IllegalArgumentException::class.java)
+        }
+        assertThatThrownBy { configuration.source(id, "BUILDER", "/opt/hub/../private-key.pem", null) }.isInstanceOf(IllegalArgumentException::class.java)
+        assertThatThrownBy { configuration.source(id, "DEPLOYER", "deploy/../../application-production.yml", null) }.isInstanceOf(IllegalArgumentException::class.java)
+    }
+
+    @Test fun `source edits validate YAML and snapshot before writes and preserve native settings on conflicts`() {
+        val id = UUID.randomUUID()
+        pipelines.create(NewPipeline(id, app.id, "main", "build", "app.jar"))
+        val source = SourceSnapshot("owner/repo", "main", "b".repeat(40), ":")
+        `when`(github.resolve("https://github.com/owner/repo", "main", ":")).thenReturn(source)
+        assertThatThrownBy { editing.save(id, SourceFileWrite(".infra-hub/custom.yaml", "broken: [", source.sha, true)) }.isInstanceOf(IllegalArgumentException::class.java)
+        assertThatThrownBy { editing.save(id, SourceFileWrite(".infra-hub/custom.sh", "printf ok", "a".repeat(40), true)) }.isInstanceOf(Conflict::class.java)
+        org.mockito.Mockito.verify(github, org.mockito.Mockito.never()).saveFile(source, ".infra-hub/custom.yaml", "broken: [", true)
+        org.mockito.Mockito.verify(github, org.mockito.Mockito.never()).saveFile(source, ".infra-hub/custom.sh", "printf ok", true)
+        `when`(github.saveFile(source, ".infra-hub/custom.sh", "printf ok", true)).thenReturn("c".repeat(40))
+        val saved = editing.save(id, SourceFileWrite(".infra-hub/custom.sh", "printf ok", source.sha, true))
+        assertThat(saved.sha).isEqualTo("c".repeat(40))
+        assertThat(saved.content).isEqualTo("printf ok")
+        assertThat(queue.builds()).isEmpty()
+        editing.buildSettings(id, NativeBuildSettings("bash .infra-hub/custom.sh", "app.jar", "build", "app.jar"))
+        assertThat(configuration.view(id).command).isEqualTo("bash .infra-hub/custom.sh")
+        assertThatThrownBy { editing.buildSettings(id, NativeBuildSettings("overwrite", "app.jar", "build", "app.jar")) }.isInstanceOf(Conflict::class.java)
+        assertThat(configuration.view(id).command).isEqualTo("bash .infra-hub/custom.sh")
+        assertThat(pipelines.list().single()["enabled"]).isEqualTo(false)
+    }
+    @Test fun `environment is explicit and a paused native pipeline supports an idempotent one time release`() {
+        val id = UUID.randomUUID()
+        pipelines.create(NewPipeline(id, app.id, "main", "build", "app.jar"))
+        assertThat(pipelines.list().single()["environment"]).isNull()
+        pipelines.environment(id, "prod")
+        assertThat(pipelines.list().single()["environment"]).isEqualTo("prod")
+        assertThat(pipelines.create(NewPipeline(id, app.id, "main", "build", "app.jar"))["environment"]).isEqualTo("prod")
+        assertThatThrownBy { pipelines.environment(id, "staging") }.isInstanceOf(IllegalArgumentException::class.java)
+        assertThatThrownBy { pipelines.release(id, UUID.randomUUID(), "main", "dev") }.isInstanceOf(Conflict::class.java)
+        assertThatThrownBy { pipelines.release(id, UUID.randomUUID(), "dev", "prod") }.isInstanceOf(Conflict::class.java)
+        assertThat(queue.builds()).isEmpty()
+        val source = SourceSnapshot("owner/repo", "main", "e".repeat(40), "build")
+        `when`(github.resolve("https://github.com/owner/repo", "main", "build")).thenReturn(source)
+        val request = UUID.randomUUID()
+        val build = pipelines.release(id, request, "main", "prod")
+        `when`(github.resolve("https://github.com/owner/repo", "main", "build")).thenThrow(RepositoryFailure("offline"))
+        assertThat(pipelines.release(id, request, "main", "prod").id).isEqualTo(build.id)
+        assertThat(queue.builds()).hasSize(1)
+        assertThat(build.source?.artifactPath).isEqualTo("app.jar")
+        assertThat(pipelines.list().single()["enabled"]).isEqualTo(false)
+        jdbc.update("UPDATE builds SET status='SUCCEEDED',image_reference='image@sha256:abc',artifact_sha256=repeat('a',64),artifact_size=1 WHERE id=?", build.id)
+        awaitPipeline { assertThat(apps.list()).hasSize(1) }
+        assertThat(apps.list().single().buildId).isEqualTo(build.id)
+        pipelines.environment(id, null)
+        assertThat(pipelines.list().single()["environment"]).isNull()
+    }
     @Test fun `disabled pipeline previews immutable GitHub source without deploying`() {
         val id = UUID.randomUUID()
         pipelines.create(NewPipeline(id, app.id, "main", "build", "app.jar"))
@@ -62,6 +144,26 @@ class PipelinesTest @Autowired constructor(private val pipelines: PipelineServic
         pipelines.enabled(id, true)
         awaitPipeline { assertThat(apps.list()).hasSize(1) }
         assertThat(apps.list().single().buildId).isEqualTo(b.id)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["FAILED", "CANCELLED"])
+    fun `new explicit native release retries a terminal deployment while the old request remains idempotent`(status: String) {
+        val id = UUID.randomUUID()
+        pipelines.create(NewPipeline(id, app.id, "main", "build", "app.jar", environment = "prod"))
+        `when`(github.resolve("https://github.com/owner/repo", "main", "build")).thenReturn(SourceSnapshot("owner/repo", "main", "f".repeat(40), "build"))
+        val request = UUID.randomUUID()
+        val first = pipelines.release(id, request, "main", "prod")
+        jdbc.update("UPDATE builds SET status='SUCCEEDED',image_reference='image@sha256:abc',artifact_sha256=repeat('a',64),artifact_size=1 WHERE id=?", first.id)
+        val deployment = apps.enqueue(app.id, NewDeployment(UUID.randomUUID(), first.id))
+        jdbc.update("UPDATE deployments SET status=? WHERE id=?", status, deployment.id)
+        jdbc.update("UPDATE pipelines SET deployment_id=? WHERE id=?", deployment.id, id)
+        assertThat(pipelines.release(id, request, "main", "prod").id).isEqualTo(first.id)
+        val retry = pipelines.release(id, UUID.randomUUID(), "main", "prod")
+        assertThat(retry.id).isNotEqualTo(first.id)
+        assertThat(retry.source).isEqualTo(first.source)
+        assertThat(pipelines.list().single()["deployment_id"]).isNull()
+        assertThat(pipelines.list().single()["enabled"]).isEqualTo(false)
     }
 
     @ParameterizedTest

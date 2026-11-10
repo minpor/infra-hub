@@ -2,8 +2,9 @@ import { useRef, useState } from 'react'
 import { api } from './api'
 import { t, useLanguage } from './i18n'
 import { YamlEditor } from './YamlEditor'
+import { BranchSelect } from './BranchSelect'
 
-export type YamlPipeline = { id: string; application_id: string; ref: string; enabled: boolean; config_path?: string | null; last_sha: string | null; build_id: string | null; deployment_id: string | null; message: string | null }
+export type YamlPipeline = { id: string; application_id: string; ref: string; enabled: boolean; environment?: 'dev' | 'prod' | null; config_path?: string | null; last_sha: string | null; build_id: string | null; deployment_id: string | null; message: string | null }
 type App = { id: string; name: string; projectId: string }
 type Preview = { sha: string; path: string; sha256: string; yaml: string; definition: { name: string; build: { steps: { name: string }[]; artifact: string | null }; deploy: { directory: string; steps: { name: string }[]; verify: { name: string }[]; rollback: { name: string }[] } } }
 
@@ -12,6 +13,7 @@ export function YamlDeployments({ apps, pipelines, onUpdate }: { apps: App[]; pi
   const [open, setOpen] = useState(false)
   const [applicationId, setApplicationId] = useState('')
   const [ref, setRef] = useState('main')
+  const [environment, setEnvironment] = useState('prod')
   const [path, setPath] = useState('.infra-hub/production.yaml')
   const [preview, setPreview] = useState<Preview | null>(null)
   const [busy, setBusy] = useState(false)
@@ -26,15 +28,16 @@ export function YamlDeployments({ apps, pipelines, onUpdate }: { apps: App[]; pi
   }
   const bindings = pipelines.filter(p => p.config_path)
   return <section className="panel server-card yaml-pipelines" aria-label={t('Деплой через YAML')}>
-    <div className="panel-heading"><div><h2>{t('Деплой через YAML')}</h2><p className="muted">{t('Несколько файлов на проект: отдельные окружения, сервисы и сценарии.')}</p></div><button className="secondary" onClick={() => setOpen(!open)} aria-expanded={open}>{t('Подключить YAML')}</button></div>
+    <div className="panel-heading"><div><h2>{t('Деплой через YAML')}</h2><p className="muted">{t('Несколько файлов на проект: отдельные окружения, сервисы и сценарии.')}</p></div><button className="secondary" onClick={() => setOpen(!open)} aria-expanded={open} disabled={busy || editor !== null}>{t('Подключить YAML')}</button></div>
     <div className="server-body">
       <p className="muted">{t('Команды build, deploy, verify и rollback хранятся в репозитории. Сервер и секреты задаются в приложении. Каждый запуск фиксирует файл и commit SHA.')}</p>
       {error && <p className="error" role="alert">{t(error)}</p>}
       {message && <p role="status">{t(message)}</p>}
       {open && <form className="project-form yaml-form" onSubmit={e => { e.preventDefault(); void action(async () => { setPreview(null); setPreview(await api<Preview>('/deployment-yaml/preview', { applicationId, ref, path })) }) }}>
-        <label>{t('Приложение для YAML')}<select required value={applicationId} onChange={e => { setApplicationId(e.target.value); setPreview(null) }}><option value="">{t('Выберите приложение')}</option>{apps.map(app => <option key={app.id} value={app.id}>{app.name}</option>)}</select></label>
-        <label>{t('Ветка YAML')}<input required maxLength={200} value={ref} onChange={e => { setRef(e.target.value); setPreview(null) }}/></label>
-        <label>{t('Путь YAML в репозитории')}<input required maxLength={300} value={path} onChange={e => { setPath(e.target.value); setPreview(null) }} placeholder=".infra-hub/production.yaml"/></label>
+        <label>{t('Приложение для YAML')}<select required disabled={busy} value={applicationId} onChange={e => { setApplicationId(e.target.value); setPreview(null) }}><option value="">{t('Выберите приложение')}</option>{apps.map(app => <option key={app.id} value={app.id}>{app.name}</option>)}</select></label>
+        <label>{t('Окружение')}<select disabled={busy} value={environment} onChange={e => { const env = e.target.value; setEnvironment(env); setRef(env === 'dev' ? 'dev' : 'main'); setPath(env === 'dev' ? '.infra-hub/dev.yaml' : '.infra-hub/production.yaml'); setPreview(null) }}><option value="dev">DEV</option><option value="prod">PROD</option><option value="">{t('Без окружения')}</option></select></label>
+        {applicationId && <BranchSelect projectId={apps.find(a => a.id === applicationId)?.projectId || ''} label="Ветка YAML" value={ref} disabled={busy} allowDefault={false} onChange={value => { setRef(value); setPreview(null) }}/> }
+        <label>{t('Путь YAML в репозитории')}<input required disabled={busy} maxLength={300} value={path} onChange={e => { setPath(e.target.value); setPreview(null) }} placeholder=".infra-hub/production.yaml"/></label>
         <button disabled={busy}>{busy ? t('Загружаем YAML…') : t('Проверить YAML')}</button>
       </form>}
       {open && preview && <div className="yaml-preview">
@@ -44,13 +47,14 @@ export function YamlDeployments({ apps, pipelines, onUpdate }: { apps: App[]; pi
         <pre className="config-preview">{preview.yaml}</pre>
         <p className="note">{t('Шаги deploy выполняются с правами выбранного SSH-пользователя. Подключение сохраняется с выключенной автоматизацией; запуск выпуска — отдельное действие.')}</p>
         <button disabled={busy} onClick={() => void action(async () => {
-          await api('/deployment-yaml', { id: bindingId.current, applicationId, ref, path, expectedSha: preview.sha, enabled: false })
+          await api('/deployment-yaml', { id: bindingId.current, applicationId, ref, path, expectedSha: preview.sha, enabled: false, environment: environment || null })
           bindingId.current = crypto.randomUUID(); setPreview(null); setOpen(false); await onUpdate(); setMessage('YAML подключён. Можно запустить выпуск или включить автоматизацию.')
         })}>{t('Сохранить YAML-привязку')}</button>
       </div>}
       {bindings.length === 0 && !open && <p className="empty">{t('YAML ещё не подключены. Создайте приложение и укажите файл из его репозитория.')}</p>}
       {bindings.map(p => <article className="yaml-binding" key={p.id}>
         <div className="yaml-binding-heading"><div><span className="eyebrow">{apps.find(a => a.id === p.application_id)?.name}</span><h3><code>{p.config_path}</code></h3></div><span className={`badge ${p.enabled ? 'running' : ''}`}>{p.enabled ? t('Автоматизация включена') : t('Ручной запуск')}</span></div>
+        <label className="pipeline-environment">{t('Окружение')}<select aria-label={t('Окружение сценария {0}', [p.config_path])} value={p.environment || ''} disabled={busy || editor !== null} onChange={e => { const environment = e.target.value || null; void action(async () => { await api(`/pipelines/${p.id}/environment`, { environment }); await onUpdate() }) }}><option value="">{t('Без окружения')}</option><option value="dev">DEV</option><option value="prod">PROD</option></select></label>
         <p className="yaml-binding-meta"><span>⑂ {p.ref}</span><span>{t('Последний запуск')}: {p.last_sha?.slice(0, 12) || t('ещё не было')}</span></p>
         {p.message && <p role="status">{t(p.message)}</p>}
         {p.build_id && <a href={`#builds/${p.build_id}`}>{t('Открыть сборку')}</a>}

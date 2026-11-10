@@ -28,3 +28,9 @@ tasks.test {
     outputs.upToDateWhen { false }
 }
 tasks.bootJar { archiveFileName.set("infra-hub.jar") }
+tasks.processResources {
+    from(rootProject.file("deploy/runner")) {
+        include("build-aukni-web.py", "bundle-web.py", "bundle-android.py", "local-nginx-test.py", "run-build")
+        into("runner-scripts")
+    }
+}

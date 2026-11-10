@@ -109,3 +109,11 @@ Additional owner/CSRF-protected endpoints:
 - `POST /api/deployment-yaml/document`: `{applicationId, ref, path}` reads raw YAML, including invalid YAML.
 - `POST /api/deployment-yaml/validate`: `{yaml}` validates a draft without writing or running it.
 - `POST /api/deployment-yaml/save`: `{applicationId, ref, path, expectedSha, yaml}` validates and commits an existing file, returning its new commit and content hash.
+
+## Launch from a project
+
+Choose **Open project**. The **Settings & scripts** tab opens first and displays the selected pipeline’s YAML and source files; repository YAML can be edited there. Switch to **Run** for **Build only**, **DEV** or **PROD**. GitHub branches are listed with pagination and manual entry. Deployment requires a pipeline matching the selected environment and branch; the application and server are shown before launch. Build commands and the YAML editor are available under the expandable configuration section.
+
+Assign the binding’s `environment` explicitly when attaching YAML or in **Applications**: `dev`, `prod`, or unassigned. Existing explicit application `configuration.target` values are preserved; other pipelines remain unassigned. Branch and application names do not choose the environment. Changing the label does not change the application’s server, branch or runtime variables.
+
+A one-time release can build, deploy and verify a paused pipeline without enabling future automatic releases. Build and deployment results remain separate.
