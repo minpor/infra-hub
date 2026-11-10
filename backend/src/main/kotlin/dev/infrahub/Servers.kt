@@ -68,6 +68,12 @@ class SshTransport(@param:Value("\${HUB_SSH_DIRECTORY:.local/ssh}") private val 
         return identity(keys.single())
     }
 
+    fun resources(server: Server): SshResult {
+        val script = javaClass.getResource("/server-resources.py")!!.readText()
+        val command = "python3 -c '" + script.replace("'", "'\"'\"'") + "'"
+        return withCommand(server, command) { run(it) }
+    }
+
     fun check(server: Server): SshResult = withCommand(server, PROBE) { run(it) }
 
     fun <T> withCommand(server: Server, command: String, action: (List<String>) -> T): T {
@@ -201,8 +207,10 @@ class ServerService(private val jdbc: JdbcTemplate, private val ssh: SshTranspor
 @RestController
 @Profile("!worker")
 @RequestMapping("/api/servers")
-class ServerApi(private val service: ServerService) {
+class ServerApi(private val service: ServerService, private val resources: ServerResources) {
     @GetMapping fun list() = service.list()
+    @GetMapping("/{id}/resources") fun resources(@PathVariable id: UUID) = resources.read(id)
+    @PostMapping("/{id}/resources") fun refreshResources(@PathVariable id: UUID) = resources.refresh(id)
     @PostMapping @ResponseStatus(HttpStatus.CREATED) fun create(@RequestBody input: NewServer) = service.create(input)
     @PostMapping("/{id}/host-key") fun scan(@PathVariable id: UUID) = service.scan(id)
     @PostMapping("/{id}/trust") fun trust(@PathVariable id: UUID, @RequestBody input: TrustHost) = service.trust(id, input)

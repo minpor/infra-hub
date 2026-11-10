@@ -12,7 +12,7 @@ Use [GitHub Issues](https://github.com/minpor/infra-hub/issues). Include the com
 2. Follow [local development](docs/local-development.md). Use JDK 21 and Node.js 22.12+; run `npm --prefix frontend ci`.
 3. Keep changes limited to the issue. Add meaningful tests for changed queue, lease, auth, source-access or deployment behavior.
 4. Run `./scripts/check.sh` and the relevant Python tests. Record anything you could not run. Integration scripts that contact a live server require your own disposable installation and must not be run against someone else's infrastructure.
-5. Update both READMEs and both installation guides when changing the public setup. UI translations are welcome; the application is currently in Russian.
+5. Update both READMEs and both installation guides when changing the public setup. Keep UI translations aligned: Russian source keys and English values are in `frontend/src/en.json`; dates/numbers use `frontend/src/i18n.tsx`. Preserve raw process output instead of translating logs.
 6. Open a pull request explaining the problem, resulting behavior, checks and limitations.
 
 Backend integration tests require a dedicated database named `infra_hub_test`; use `scripts/check.sh`, which creates it temporarily. Never point tests at a live database. Do not commit generated builds, `.local`, database dumps, private keys, signing material or populated `.env` files.

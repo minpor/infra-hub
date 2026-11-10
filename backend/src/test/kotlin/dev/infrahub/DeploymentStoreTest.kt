@@ -72,4 +72,36 @@ class DeploymentStoreTest @Autowired constructor(private val store: DeploymentSt
         jdbc.update("UPDATE builds SET status='SUCCEEDED',image_reference='fake' WHERE id=?", b.id)
         assertThatThrownBy { store.enqueue(app.id, NewDeployment(UUID.randomUUID(), b.id)) }.isInstanceOf(Conflict::class.java)
     }
+    @Test fun `execution time excludes queue and reconciliation pauses but accumulates attempts`() {
+        val d = store.enqueue(app.id, NewDeployment(UUID.randomUUID(), build().id))
+        jdbc.update("UPDATE deployments SET created_at=clock_timestamp()-interval '1 hour' WHERE id=?", d.id)
+        val owner = UUID.randomUUID()
+        val running = store.claim(owner)!!
+        assertThat(running.startedAt).isNotNull()
+        assertThat(running.executionMillis).isLessThan(5000)
+        jdbc.update("UPDATE deployments SET attempt_started_at=clock_timestamp()-interval '2 minutes',lease_until=clock_timestamp()+interval '1 minute' WHERE id=?", d.id)
+        store.finish(d.id, owner, "INTERRUPTED", "Reconcile")
+        assertThat(store.get(d.id).executionMillis).isBetween(119000L, 125000L)
+        store.retry(d.id)
+        assertThat(store.get(d.id).executionMillis).isBetween(119000L, 125000L)
+        store.claim(owner)
+        jdbc.update("UPDATE deployments SET attempt_started_at=clock_timestamp()-interval '1 minute',lease_until=clock_timestamp()+interval '1 minute' WHERE id=?", d.id)
+        store.finish(d.id, owner, "SUCCEEDED", "OK")
+        assertThat(store.get(d.id).executionMillis).isBetween(179000L, 185000L)
+        assertThat(queue.overview()["deploymentMillis"]).isBetween(179000L, 185000L)
+        jdbc.update("UPDATE deployments SET execution_millis=NULL,started_at=NULL WHERE id=?", d.id)
+        assertThat(store.get(d.id).executionMillis).isNull()
+        assertThat(queue.overview()["unknownDeploymentTimes"]).isEqualTo(1)
+    }
+
+    @Test fun `lost lease duration stops at lease expiry and queued cancellation takes no execution time`() {
+        val d = store.enqueue(app.id, NewDeployment(UUID.randomUUID(), build().id))
+        store.claim(UUID.randomUUID())
+        jdbc.update("UPDATE deployments SET attempt_started_at=clock_timestamp()-interval '10 minutes',lease_until=clock_timestamp()-interval '9 minutes' WHERE id=?", d.id)
+        store.claim(UUID.randomUUID())
+        assertThat(store.get(d.id).executionMillis).isBetween(59000L, 61000L)
+        val elapsed = store.get(d.id).executionMillis
+        assertThat(store.get(d.id).executionMillis).isEqualTo(elapsed)
+    }
+
 }

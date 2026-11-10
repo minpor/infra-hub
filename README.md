@@ -8,7 +8,7 @@ Infra Hub is a self-hosted build and deployment control panel for people running
 
 The software does not require a subscription or purchased CI minutes. You provide the hardware, storage, network access, domain and backups; third-party services may have their own costs.
 
-> **Early development / 0.1.** This is a working project being prepared for broader use. The current installation model has one owner. Repository builds require additional rootless Docker setup. The UI is currently in Russian; documentation is available in English and Russian. There is no hosted service, high-availability guarantee or universal GitHub Actions compatibility.
+> **Early development / 0.1.** This is a working project being prepared for broader use. The current installation model has one owner. Repository builds require additional rootless Docker setup. The UI and setup documentation support English and Russian; use the language selector in the header. There is no hosted service, high-availability guarantee or universal GitHub Actions compatibility.
 
 ## What it can do
 
@@ -17,9 +17,9 @@ The software does not require a subscription or purchased CI minutes. You provid
 | Projects | GitHub repository links, search, build history and exact commit snapshots |
 | Queue | PostgreSQL-backed jobs, idempotent enqueue, execution leases, cancellation and interrupted-job recovery |
 | Builds | Separate worker; disposable Java 21 / Node.js containers on a rootless Docker daemon |
-| Visibility | Persisted steps, logs, exit codes, statuses and runner CPU/RAM settings |
+| Visibility | Persisted steps/logs, build/deployment minutes, queue wait and runner CPU/RAM settings |
 | Images | Package one executable JAR with a platform-owned Dockerfile, push to a registry and retain its digest |
-| Servers | Dedicated SSH keys, explicit host fingerprint confirmation and connection/Docker checks |
+| Servers | Dedicated SSH keys, host fingerprint confirmation, connection checks and measured CPU/RAM/disk snapshots |
 | Deployments | Transfer images over SSH, verify imported content, check HTTP health, retain history and roll back supported deployments |
 | Pipelines | Branch polling, build-to-deployment orchestration, manual runs and pause/resume |
 | Agents | MCP endpoint with revocable, project-scoped READ / RELEASE / CONFIGURE keys |
@@ -142,6 +142,6 @@ See [local development](docs/local-development.md), [contribution guide](CONTRIB
 
 ## Documentation and participation
 
-Start with [capabilities](docs/capabilities.md), [self-hosting](docs/self-hosting.md), [operations](docs/operations.md), [MCP](docs/mcp.md) and [roadmap](docs/roadmap.md). Reports and proposals belong in [GitHub Issues](https://github.com/minpor/infra-hub/issues); improvements are welcome as pull requests. Please include reproduction steps and sanitized logs. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+See [languages, resource measurements and execution time](docs/observability.md). Start with [capabilities](docs/capabilities.md), [self-hosting](docs/self-hosting.md), [operations](docs/operations.md), [MCP](docs/mcp.md) and [roadmap](docs/roadmap.md). Reports and proposals belong in [GitHub Issues](https://github.com/minpor/infra-hub/issues); improvements are welcome as pull requests. Please include reproduction steps and sanitized logs. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 Infra Hub code is available under the [MIT license](LICENSE). Bundled fonts retain their upstream licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

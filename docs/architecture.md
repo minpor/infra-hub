@@ -1,6 +1,6 @@
 # Architecture
 
-Infra Hub is a modular Kotlin/Spring Boot application with separate JVM roles, a React/TypeScript UI, PostgreSQL state and a Docker Compose installation. GitHub remains the source host; a bundled Git service, Coolify or Gitea is not required.
+Infra Hub is a modular Kotlin/Spring Boot application with separate JVM roles, a English/Russian React/TypeScript UI, PostgreSQL state and a Docker Compose installation. GitHub remains the source host; a bundled Git service, Coolify or Gitea is not required.
 
 ## Processes
 

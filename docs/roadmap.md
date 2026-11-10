@@ -14,7 +14,7 @@ This is a direction, not a delivery schedule. [Current capabilities](capabilitie
 
 - Complete the generic setup flow for applications and pipelines.
 - Generalize project-specific Compose/Android adapters with explicit compatibility contracts.
-- Add English UI localization and keep Russian/English documentation aligned.
+- Maintain English/Russian UI and documentation parity; extend diagnostic message translations.
 - Consider source provider integrations, PR checks and release metadata based on user demand.
 - Evaluate persistent dependency caching while preserving job isolation.
 

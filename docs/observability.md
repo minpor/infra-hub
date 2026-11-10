@@ -1,0 +1,25 @@
+# Languages, server measurements and time tracking
+
+## English
+
+Use **Language / Язык** in the header or login page to select English or Russian. The choice is saved in browser storage and survives reloads; without a saved choice, the browser language selects Russian for `ru`, otherwise English. A blocked storage setting still allows an in-memory choice. Dates, numbers and minute labels follow the selection. User names, source commands and original process logs are preserved. Known platform messages are translated; arbitrary remote/process diagnostics remain in their original language.
+
+On **Servers**, confirm the pinned SSH host key, then click **Refresh resources**. Infra Hub runs a fixed read-only Python 3 Linux probe over the dedicated SSH connection. It reads CPU capacity and a short utilization sample, memory total/used (total minus MemAvailable), root filesystem total/used, OS, architecture, hostname, load and uptime. It installs no agent, executes no user-supplied shell code and requires no sudo. Python 3 and readable `/proc` are needed. Disk represents `/`, not the sum of all disks/volumes; containerized SSH targets report their own view.
+
+Each successful measurement and timestamp is stored in PostgreSQL. Refresh is on demand. After five minutes or a failed refresh, the last successful values remain visible with a stale marker. A failed or invalid probe never replaces them with zero. No measurement is shown as unavailable rather than fabricated. API: `GET /api/servers/{id}/resources` reads the saved observation; `POST` on the same path probes and saves. Production requires owner session and CSRF for refresh.
+
+Build/deployment lists and detail show minutes. Build execution runs from `startedAt` to `finishedAt` (or now while active). Deployment execution accumulates timed attempts; queued and interrupted pauses between attempts are excluded. A lost execution lease caps an attempt at lease expiry, so interruption durations are observations/estimates rather than CPU billing. The overview sums recorded execution across the full database history, including failed/cancelled attempts with measured runtime, independently of the latest-100/latest-200 display limits. This is elapsed execution time, not CPU-minutes or a cloud charge.
+
+V9 adds resource snapshots and deployment timing fields without changing existing migrations. Old deployments lack reconstructible execution starts: their duration remains unknown and the overview shows the number excluded from known totals. New records start with zero and get an execution start when claimed. A reconciliation adds its newly measured attempt; it cannot reconstruct older missing history. Pause pipelines and drain executors before upgrading API/worker/deployer together so old executors cannot create untimed releases during a mixed-version rollout. Snapshots are observational, not a scheduler capacity guarantee.
+
+## Русский
+
+Переключатель **Language / Язык** есть в шапке и на странице входа. Выбор сохраняется в браузере; без него язык определяется по браузеру: `ru` → русский, иначе английский. При запрете localStorage переключение действует до перезагрузки. Даты, числа и минуты форматируются по выбранному языку. Имена, команды и исходные журналы не переводятся. Известные сообщения платформы переведены, произвольная диагностика процессов остаётся исходной.
+
+В **Серверах** подтвердите SSH host key и нажмите **Обновить ресурсы**. Фиксированный read-only Python 3 probe получает CPU и короткий замер загрузки, память (total − MemAvailable), занятое/общее место корневой файловой системы, ОС, архитектуру, hostname, load и uptime. Агент, sudo и установка пакетов не нужны. Требуются Python 3 и доступный `/proc`. Диск — файловая система `/`, а не сумма всех накопителей; SSH внутри контейнера показывает доступное ему окружение.
+
+Успешные значения сохраняются в PostgreSQL со временем. Обновление выполняется по кнопке. Через пять минут или при ошибке замера данные отмечаются устаревшими; последнее успешное наблюдение сохраняется. Ошибка не превращается в нулевую загрузку, отсутствующие измерения не выдумываются. GET/POST `/api/servers/{id}/resources` читают/обновляют снимок; production требует owner session и CSRF для обновления.
+
+В списках и деталях показаны минуты выполнения и ожидание первого старта. Для сборки берётся интервал startedAt → finishedAt/текущее время. Для деплоя суммируются попытки без очереди и пауз перед сверкой. При потере lease попытка ограничивается его истечением: это наблюдаемая длительность, не точный CPU-биллинг. Общая статистика считает всю историю БД, включая измеренные неуспешные/отменённые попытки, а не только последние 100/200 записей.
+
+Миграция V9 добавляет снимки и поля времени. Для старых деплоев время начала нельзя восстановить: оно остаётся неизвестным, число исключённых записей указано рядом с итогом. Сверка старого деплоя учитывает только новые измеренные попытки. Перед обновлением приостановите pipeline, дождитесь исполнителей и обновите API/worker/deployer согласованно. Наблюдаемые ресурсы не являются гарантией свободной ёмкости для новой сборки.

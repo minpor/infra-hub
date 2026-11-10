@@ -1,0 +1,71 @@
+import { test, expect } from '@playwright/test'
+
+test('language choice translates every screen and persists across reloads', async ({ page }) => {
+  await page.goto('/')
+  await page.getByLabel('Language / Язык').selectOption('en')
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+  await expect(page.getByRole('heading', { name: 'Projects and builds' })).toBeVisible()
+  await page.getByRole('button', { name: '＋ New project' }).click()
+  await expect(page.getByLabel('Name', { exact: true })).toBeVisible()
+  await page.reload()
+  await expect(page.getByLabel('Language / Язык')).toHaveValue('en')
+  await page.getByRole('link', { name: 'Servers', exact: true }).click()
+  await expect(page.getByRole('button', { name: '＋ Connect server' })).toBeVisible()
+  await page.getByRole('link', { name: 'Applications', exact: true }).click()
+  await expect(page.getByRole('button', { name: '＋ New application' })).toBeVisible()
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Runner resources' })).toBeVisible()
+  await page.getByRole('link', { name: 'MCP', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'MCP for agents' })).toBeVisible()
+  await page.getByLabel('Language / Язык').selectOption('ru')
+  await expect(page.getByRole('heading', { name: 'MCP для агентов' })).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
+
+test('login offers both languages before authentication', async ({ page }) => {
+  await page.route('**/api/session', route => route.fulfill({ status: 401, json: {} }))
+  await page.goto('/')
+  await page.getByLabel('Language / Язык').selectOption('en')
+  await expect(page.getByRole('link', { name: 'Sign in with GitHub' })).toBeVisible()
+  await page.getByLabel('Language / Язык').selectOption('ru')
+  await expect(page.getByRole('link', { name: 'Войти через GitHub' })).toBeVisible()
+})
+
+test('server resource failure preserves measured capacities and marks them stale', async ({ page }) => {
+  const server = { id: 'resources-test', name: 'prod-01', host: '192.0.2.10', port: 22, username: 'deploy', publicKey: 'fixture', hostKey: 'fixture', fingerprint: 'SHA256:fixture', status: 'READY', checkedAt: null }
+  const snapshot = { value: { hostname: 'prod-01', os: 'Test Linux', architecture: 'x86_64', cpuCount: 8, cpuUsagePercent: 36, memoryTotalBytes: 8 * 2 ** 30, memoryUsedBytes: 4 * 2 ** 30, diskTotalBytes: 120 * 2 ** 30, diskUsedBytes: 42 * 2 ** 30, loadAverage: 1.5, uptimeSeconds: 7200 }, observedAt: new Date().toISOString(), attemptedAt: new Date().toISOString(), error: null as string | null }
+  await page.route('**/api/servers', route => route.fulfill({ json: [server] }))
+  await page.route('**/api/servers/resources-test/resources', async route => {
+    if (route.request().method() === 'POST') snapshot.error = 'probe failed'
+    await route.fulfill({ json: snapshot })
+  })
+  await page.goto('/#servers')
+  await page.getByLabel('Language / Язык').selectOption('en')
+  const resources = page.getByRole('region', { name: 'Server resources' })
+  await expect(resources).toContainText('4 / 8 GiB')
+  await expect(resources.getByRole('progressbar', { name: 'CPU', exact: true })).toHaveAttribute('value', '36')
+  await resources.getByRole('button', { name: 'Refresh resources' }).click()
+  await expect(resources).toContainText('Data is stale')
+  await expect(resources).toContainText('4 / 8 GiB')
+  await expect(resources.getByRole('alert')).toContainText('last successful observation is retained')
+  await page.reload()
+  await expect(resources).toContainText('Data is stale')
+  await expect(resources).toContainText('42 / 120 GiB')
+  await page.screenshot({ path: '../.local/checks/resources-en.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: '../.local/checks/resources-mobile.png', fullPage: true })
+})
+
+test('all-history minutes are shown separately from job counts and mark missing history', async ({ page }) => {
+  await page.route('**/api/overview', route => route.fulfill({ json: { projects: 3, running: 0, queued: 0, buildMillis: 125000, deploymentMillis: 185000, unknownDeploymentTimes: 1 } }))
+  await page.goto('/')
+  await page.getByLabel('Language / Язык').selectOption('en')
+  const summary = page.getByLabel('Recorded time, all history')
+  await expect(summary).toContainText('2.08 min')
+  await expect(summary).toContainText('3.08 min')
+  await expect(summary).toContainText('Unknown durations: 1')
+  await page.getByLabel('Language / Язык').selectOption('ru')
+  await expect(page.getByLabel('Учтённое время за всё время')).toContainText('2,08 мин')
+})

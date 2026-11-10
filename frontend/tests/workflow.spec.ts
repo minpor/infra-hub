@@ -109,7 +109,7 @@ test('application configuration, digest selection, deployment history and retry'
   await page.route('**/api/deployments', route => route.fulfill({ json: deployments }))
   await page.route('**/api/applications/application-1/deployments', async route => {
     expect(route.request().postDataJSON().buildId).toBe(build.id)
-    const release = { id: 'release-1', applicationId: app.id, buildId: build.id, imageReference: image.reference, status: 'INTERRUPTED', message: 'Потерян ответ SSH', createdAt: new Date().toISOString() }
+    const release = { id: 'release-1', applicationId: app.id, buildId: build.id, imageReference: image.reference, status: 'INTERRUPTED', message: 'Потерян ответ SSH', createdAt: '2026-11-10T08:00:00Z', startedAt: '2026-11-10T08:01:30Z', finishedAt: '2026-11-10T08:04:00Z', executionMillis: 150000 }
     deployments = [release]
     await route.fulfill({ json: release })
   })
@@ -127,6 +127,8 @@ test('application configuration, digest selection, deployment history and retry'
   await expect(page.getByText('private=value', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Развернуть', exact: true }).click()
   await expect(page.getByLabel('Логи деплоя')).toContainText('SSH transfer')
+  await expect(page.locator('.run-timing')).toContainText('1,5 мин')
+  await expect(page.locator('.run-timing')).toContainText('2,5 мин')
   await expect(page.getByRole('button', { name: 'Развернуть', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: 'Сверить и повторить' }).click()
   await expect.poll(() => retried).toBe(true)

@@ -11,7 +11,10 @@ class QueueStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemp
     fun overview(): Map<String, Long> = mapOf(
         "projects" to (jdbc.queryForObject("SELECT count(*) FROM projects", Long::class.java) ?: 0L),
         "running" to (jdbc.queryForObject("SELECT count(*) FROM builds WHERE status IN ('RUNNING', 'CANCEL_REQUESTED')", Long::class.java) ?: 0L),
-        "queued" to (jdbc.queryForObject("SELECT count(*) FROM builds WHERE status = 'QUEUED'", Long::class.java) ?: 0L)
+        "queued" to (jdbc.queryForObject("SELECT count(*) FROM builds WHERE status = 'QUEUED'", Long::class.java) ?: 0L),
+        "buildMillis" to (jdbc.queryForObject("SELECT COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(finished_at,LEAST(clock_timestamp(),lease_until))-started_at))*1000)),0)::bigint FROM builds WHERE started_at IS NOT NULL", Long::class.java) ?: 0L),
+        "deploymentMillis" to (jdbc.queryForObject("SELECT COALESCE(SUM(execution_millis + COALESCE(GREATEST(0,EXTRACT(EPOCH FROM (LEAST(clock_timestamp(),lease_until)-attempt_started_at))*1000),0)),0)::bigint FROM deployments", Long::class.java) ?: 0L),
+        "unknownDeploymentTimes" to (jdbc.queryForObject("SELECT count(*) FROM deployments WHERE execution_millis IS NULL", Long::class.java) ?: 0L)
     )
 
     private fun build(rs: ResultSet) = Build(

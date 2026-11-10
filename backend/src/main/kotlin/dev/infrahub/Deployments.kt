@@ -24,14 +24,21 @@ data class HubApplication(
 data class NewDeployment(val requestId: UUID, val buildId: UUID)
 data class Deployment(
     val id: UUID, val applicationId: UUID, val buildId: UUID, val imageReference: String,
-    val status: String, val message: String?, val createdAt: Instant, val finishedAt: Instant?
+    val status: String, val message: String?, val createdAt: Instant, val finishedAt: Instant?,
+    val startedAt: Instant? = null, val executionMillis: Long? = null
 )
 
 @Repository
 class DeploymentStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemplate, private val mapper: ObjectMapper) {
     private fun row(rs: ResultSet) = Deployment(rs.getObject("id", UUID::class.java), rs.getObject("application_id", UUID::class.java),
         rs.getObject("build_id", UUID::class.java), rs.getString("image_reference"), rs.getString("status"), rs.getString("message"),
-        rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("finished_at")?.toInstant())
+        rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("finished_at")?.toInstant(), rs.getTimestamp("started_at")?.toInstant(),
+        (rs.getObject("execution_millis") as? Number)?.toLong()?.let { elapsed ->
+            elapsed + (rs.getTimestamp("attempt_started_at")?.toInstant()?.let { start ->
+                val end = minOf(Instant.now(), rs.getTimestamp("lease_until")?.toInstant() ?: start)
+                java.time.Duration.between(start, end).toMillis().coerceAtLeast(0)
+            } ?: 0)
+        })
     fun applications(): List<HubApplication> = jdbc.query("SELECT * FROM applications ORDER BY created_at DESC") { rs, _ ->
         HubApplication(rs.getObject("id", UUID::class.java), rs.getObject("project_id", UUID::class.java), rs.getObject("server_id", UUID::class.java),
             rs.getString("name"), (rs.getObject("host_port") as Int?), rs.getInt("container_port"), rs.getString("health_path"),
@@ -122,10 +129,10 @@ class DeploymentStore(private val jdbc: JdbcTemplate, private val tx: Transactio
     }!!
     fun claim(owner: UUID): Deployment? = tx.execute {
         jdbc.execute("SELECT pg_advisory_xact_lock(4821902)")
-        jdbc.update("UPDATE deployments SET status = 'INTERRUPTED', message = 'Потеряна связь с исполнителем. Сверьте и повторите тот же выпуск.', finished_at = clock_timestamp(), lease_until = NULL WHERE status IN ('RUNNING','CANCEL_REQUESTED') AND lease_until < clock_timestamp()")
+        jdbc.update("UPDATE deployments SET execution_millis=execution_millis + GREATEST(0, (EXTRACT(EPOCH FROM (LEAST(clock_timestamp(),lease_until)-attempt_started_at))*1000)::bigint), attempt_started_at=NULL, status = 'INTERRUPTED', message = 'Потеряна связь с исполнителем. Сверьте и повторите тот же выпуск.', finished_at = clock_timestamp(), lease_until = NULL WHERE status IN ('RUNNING','CANCEL_REQUESTED') AND lease_until < clock_timestamp()")
         if (jdbc.queryForObject("SELECT count(*) FROM deployments WHERE status IN ('RUNNING','CANCEL_REQUESTED')", Long::class.java) != 0L) return@execute null
         val next = jdbc.query("SELECT * FROM deployments WHERE status = 'QUEUED' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED") { rs, _ -> row(rs) }.firstOrNull() ?: return@execute null
-        jdbc.update("UPDATE deployments SET status = 'RUNNING', lease_owner = ?, lease_until = clock_timestamp() + interval '15 seconds' WHERE id = ?", owner, next.id)
+        jdbc.update("UPDATE deployments SET started_at=COALESCE(started_at,clock_timestamp()),attempt_started_at=clock_timestamp(),execution_millis=COALESCE(execution_millis,0),status = 'RUNNING', lease_owner = ?, lease_until = clock_timestamp() + interval '15 seconds' WHERE id = ?", owner, next.id)
         get(next.id)
     }
     fun cancel(id: UUID): Deployment = tx.execute {
@@ -145,7 +152,7 @@ class DeploymentStore(private val jdbc: JdbcTemplate, private val tx: Transactio
     fun logs(id: UUID, after: Long = 0): List<Map<String, Any>> { require(after >= 0); get(id); return jdbc.queryForList("SELECT id,created_at,text FROM deployment_logs WHERE deployment_id = ? AND id > ? ORDER BY id LIMIT 300", id, after) }
     fun finish(id: UUID, owner: UUID, status: String, message: String) = tx.executeWithoutResult {
         require(status in setOf("SUCCEEDED", "FAILED", "INTERRUPTED", "CANCELLED"))
-        val changed = jdbc.update("UPDATE deployments SET status = ?, message = ?, finished_at = clock_timestamp(), lease_until = NULL WHERE id = ? AND lease_owner = ? AND status IN ('RUNNING','CANCEL_REQUESTED') AND lease_until > clock_timestamp()", status, message.take(1000), id, owner)
+        val changed = jdbc.update("UPDATE deployments SET execution_millis=execution_millis + GREATEST(0, (EXTRACT(EPOCH FROM (LEAST(clock_timestamp(),lease_until)-attempt_started_at))*1000)::bigint), attempt_started_at=NULL, status = ?, message = ?, finished_at = clock_timestamp(), lease_until = NULL WHERE id = ? AND lease_owner = ? AND status IN ('RUNNING','CANCEL_REQUESTED') AND lease_until > clock_timestamp()", status, message.take(1000), id, owner)
         if (changed == 1 && status == "SUCCEEDED") jdbc.update("UPDATE applications SET current_deployment = ? WHERE id = ?", id, get(id).applicationId)
     }
 }

@@ -1,8 +1,11 @@
+import { t, useLanguage, locale } from './i18n'
 import { useEffect, useRef, useState } from 'react'
+import { RunTiming } from './RunTiming'
+import { minutes } from './i18n'
 import { api, type Build, type Project } from './api'
 
 type App = { id: string; projectId: string; serverId: string; name: string; hostPort: number; containerPort: number; healthPath: string; environmentKeys: string[]; currentDeployment: string | null; kind?: string; configuration?: Record<string,string> }
-type Deployment = { id: string; applicationId: string; buildId: string; imageReference: string; status: string; message: string | null; createdAt: string }
+type Deployment = { id: string; applicationId: string; buildId: string; imageReference: string; status: string; message: string | null; createdAt: string; startedAt?: string | null; finishedAt?: string | null; executionMillis?: number | null }
 type Server = { id: string; name: string; status: string }
 const labels: Record<string, string> = { QUEUED: 'В очереди', RUNNING: 'Выполняется', SUCCEEDED: 'Успешно', FAILED: 'Ошибка', INTERRUPTED: 'Нужна сверка', CANCEL_REQUESTED: 'Отменяется', CANCELLED: 'Отменён' }
 function acceptsBuild(app: App, build: Build) {
@@ -12,6 +15,7 @@ function acceptsBuild(app: App, build: Build) {
 }
 
 export function Applications() {
+  useLanguage()
   const [apps, setApps] = useState<App[]>([])
   const [releases, setReleases] = useState<Deployment[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -72,7 +76,7 @@ export function Applications() {
   }
   async function launch(app: App, rollback: boolean) {
     const buildId = choices[app.id] || builds.find(b => acceptsBuild(app, b))?.id
-    if (!rollback && !buildId) throw new Error('Выберите сборку с опубликованным образом')
+    if (!rollback && !buildId) throw new Error(t("Выберите сборку с опубликованным образом"))
     const key = `${app.id}:${rollback ? 'rollback' : buildId}`
     const requestId = requests.current.get(key) || crypto.randomUUID()
     requests.current.set(key, requestId)
@@ -81,51 +85,51 @@ export function Applications() {
   }
   const selectedRelease = releases.find(d => d.id === selected)
   return <>
-    <div className="page-heading"><div className="title"><p className="eyebrow">ВЫПУСКИ</p><h1>Приложения</h1><p className="muted">Выберите собранный образ и разверните его на своём сервере.</p></div><button onClick={() => setOpen(!open)}>＋ Новое приложение</button></div>
-    {error && <p role="alert" className="error">{error}</p>}
+    <div className="page-heading"><div className="title"><p className="eyebrow">{t("ВЫПУСКИ")}</p><h1>{t("Приложения")}</h1><p className="muted">{t("Выберите собранный образ и разверните его на своём сервере.")}</p></div><button onClick={() => setOpen(!open)}>{t("＋ Новое приложение")}</button></div>
+    {error && <p role="alert" className="error">{t(error)}</p>}
     {open && <form className="panel project-form" onSubmit={e => { e.preventDefault(); void action(async () => {
       const vars: Record<string, string> = Object.create(null)
       for (const line of environment.split('\n').filter(line => line.trim())) {
         const split = line.indexOf('=')
-        if (split < 1) throw new Error('Введите переменные в формате ИМЯ=значение, по одной на строку')
+        if (split < 1) throw new Error(t("Введите переменные в формате ИМЯ=значение, по одной на строку"))
         const key = line.slice(0, split)
-        if (Object.hasOwn(vars, key)) throw new Error('Имена переменных не должны повторяться')
+        if (Object.hasOwn(vars, key)) throw new Error(t("Имена переменных не должны повторяться"))
         vars[key] = line.slice(split + 1)
       }
       await api('/applications', { id: createId.current, name, projectId, serverId, hostPort: Number(hostPort), containerPort: Number(containerPort), healthPath, environment: vars })
       createId.current = crypto.randomUUID(); setName(''); setEnvironment(''); setOpen(false)
     }) }}>
-      <h2>Новое приложение</h2>
-      <label>Название приложения<input value={name} onChange={e => setName(e.target.value)} required maxLength={80}/></label>
-      <label>Проект<select value={projectId} onChange={e => setProjectId(e.target.value)} required><option value="">Выберите проект</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-      <label>Сервер приложения<select value={serverId} onChange={e => setServerId(e.target.value)} required><option value="">Выберите сервер</option>{servers.filter(s => s.status === 'READY').map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
-      <div className="server-fields"><label>Порт на сервере<input type="number" min={1024} max={65535} required value={hostPort} onChange={e => setHostPort(e.target.value)}/></label><label>Порт контейнера<input type="number" min={1} max={65535} required value={containerPort} onChange={e => setContainerPort(e.target.value)}/></label></div>
-      <label>HTTP-путь проверки здоровья<input value={healthPath} onChange={e => setHealthPath(e.target.value)} required maxLength={200} placeholder="/actuator/health"/></label>
-      <label>Переменные окружения<textarea value={environment} onChange={e => setEnvironment(e.target.value)} rows={4} placeholder={'SERVER_PORT=8080\nSPRING_PROFILES_ACTIVE=dev'}/></label>
-      <p className="muted">Порт доступен на 127.0.0.1 сервера. Проверка ожидает HTTP 2xx за 60 секунд. Настройки сохраняются для всех выпусков этого приложения; значения переменных после создания не отображаются.</p>
-      <p className="note">Переключение кратковременно останавливает прежний контейнер. При ошибке Infra Hub запускает его снова. Миграции базы должны быть совместимы с возвратом версии.</p>
-      <div className="actions"><button disabled={busy}>Создать приложение</button><button type="button" className="secondary" disabled={busy} onClick={() => setOpen(false)}>Закрыть</button></div>
+      <h2>{t("Новое приложение")}</h2>
+      <label>{t("Название приложения")}<input value={name} onChange={e => setName(e.target.value)} required maxLength={80}/></label>
+      <label>{t("Проект")}<select value={projectId} onChange={e => setProjectId(e.target.value)} required><option value="">{t("Выберите проект")}</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <label>{t("Сервер приложения")}<select value={serverId} onChange={e => setServerId(e.target.value)} required><option value="">{t("Выберите сервер")}</option>{servers.filter(s => s.status === 'READY').map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+      <div className="server-fields"><label>{t("Порт на сервере")}<input type="number" min={1024} max={65535} required value={hostPort} onChange={e => setHostPort(e.target.value)}/></label><label>{t("Порт контейнера")}<input type="number" min={1} max={65535} required value={containerPort} onChange={e => setContainerPort(e.target.value)}/></label></div>
+      <label>{t("HTTP-путь проверки здоровья")}<input value={healthPath} onChange={e => setHealthPath(e.target.value)} required maxLength={200} placeholder="/actuator/health"/></label>
+      <label>{t("Переменные окружения")}<textarea value={environment} onChange={e => setEnvironment(e.target.value)} rows={4} placeholder={'SERVER_PORT=8080\nSPRING_PROFILES_ACTIVE=dev'}/></label>
+      <p className="muted">{t("Порт доступен на 127.0.0.1 сервера. Проверка ожидает HTTP 2xx за 60 секунд. Настройки сохраняются для всех выпусков этого приложения; значения переменных после создания не отображаются.")}</p>
+      <p className="note">{t("Переключение кратковременно останавливает прежний контейнер. При ошибке Infra Hub запускает его снова. Миграции базы должны быть совместимы с возвратом версии.")}</p>
+      <div className="actions"><button disabled={busy}>{t("Создать приложение")}</button><button type="button" className="secondary" disabled={busy} onClick={() => setOpen(false)}>{t("Закрыть")}</button></div>
     </form>}
-    {!loaded ? <p className="empty">Загружаем приложения…</p> : apps.length === 0 ? <section className="panel empty"><h2>Первый деплой</h2><p>Опубликуйте Java-образ, подключите сервер и создайте приложение.</p></section> : apps.map(app => {
+    {!loaded ? <p className="empty">{t("Загружаем приложения…")}</p> : apps.length === 0 ? <section className="panel empty"><h2>{t("Первый деплой")}</h2><p>{t("Опубликуйте Java-образ, подключите сервер и создайте приложение.")}</p></section> : apps.map(app => {
       const available = builds.filter(b => acceptsBuild(app, b))
       const pipeline = pipelines.find(p => p.application_id === app.id)
       const pipelineRelease = releases.find(d => d.id === pipeline?.deployment_id)
       const current = releases.find(d => d.id === app.currentDeployment)
       const unresolved = releases.some(d => d.applicationId === app.id && ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED', 'INTERRUPTED'].includes(d.status))
       const previous = releases.some(d => d.applicationId === app.id && d.status === 'SUCCEEDED' && d.buildId !== current?.buildId)
-      return <section className="panel server-card" key={app.id}><div className="panel-heading"><h2>{app.name}</h2><span className="muted">{servers.find(s => s.id === app.serverId)?.name} · {app.kind === 'COMPOSE' ? 'существующий Compose' : app.kind === 'ANDROID' ? 'Android' : `127.0.0.1:${app.hostPort}`}</span></div><div className="server-body">
-        <p className="muted">{projects.find(p => p.id === app.projectId)?.name} · контейнер :{app.containerPort} · проверка {app.healthPath}</p>
+      return <section className="panel server-card" key={app.id}><div className="panel-heading"><h2>{app.name}</h2><span className="muted">{servers.find(s => s.id === app.serverId)?.name} · {app.kind === 'COMPOSE' ? t("существующий Compose") : app.kind === 'ANDROID' ? 'Android' : `127.0.0.1:${app.hostPort}`}</span></div><div className="server-body">
+        <p className="muted">{projects.find(p => p.id === app.projectId)?.name}  {t("· контейнер :")}{app.containerPort}  {t("· проверка")} {app.healthPath}</p>
         {app.kind === 'COMPOSE' && <p className="muted">{app.configuration?.root} · {app.configuration?.url}</p>}
-        {app.kind === 'ANDROID' && <p className="muted">Подписанные APK и AAB · {app.configuration?.target} · {app.configuration?.url}</p>}
-        {pipeline && <div className="note"><strong>GitHub → Infra Hub · {pipeline.ref}</strong><p>{pipeline.enabled ? 'Автоматическая сборка и выпуск при изменении ветки' : 'Автоматический выпуск приостановлен'} · {pipeline.last_sha?.slice(0,12) || 'ожидаем первый запуск'}</p><p>{pipelineRelease?.message || pipeline.message}</p>{pipeline.build_id && <p><a href={`#builds/${pipeline.build_id}`}>Сборка {pipeline.build_id.slice(0,8)} · {builds.find(b => b.id === pipeline.build_id)?.status || 'история'} — открыть логи</a></p>}<div className="actions"><button disabled={busy || unresolved} onClick={() => void action(async () => { await api(`/pipelines/${pipeline.id}/run`, {}) })}>{pipeline.enabled ? 'Собрать и выпустить' : 'Собрать без выкладки'}</button><button className="secondary" disabled={busy} onClick={() => void action(async () => { await api(`/pipelines/${pipeline.id}/enabled`, { enabled: !pipeline.enabled }) })}>{pipeline.enabled ? 'Приостановить автоматизацию' : 'Включить автоматизацию'}</button></div></div>}
-        <p>Текущий выпуск: <code>{app.currentDeployment?.slice(0, 8) || (app.kind === 'COMPOSE' ? 'существующая версия до Infra Hub' : app.kind === 'ANDROID' ? 'существующий APK до Infra Hub' : 'ещё не развёрнут')}</code></p>
+        {app.kind === 'ANDROID' && <p className="muted">{t("Подписанные APK и AAB ·")} {app.configuration?.target} · {app.configuration?.url}</p>}
+        {pipeline && <div className="note"><strong>GitHub → Infra Hub · {pipeline.ref}</strong><p>{pipeline.enabled ? t("Автоматическая сборка и выпуск при изменении ветки") : t("Автоматический выпуск приостановлен")} · {pipeline.last_sha?.slice(0,12) || t("ожидаем первый запуск")}</p><p>{t(pipelineRelease?.message || pipeline.message)}</p>{pipeline.build_id && <p><a href={`#builds/${pipeline.build_id}`}>{t("Сборка")} {pipeline.build_id.slice(0,8)} · {builds.find(b => b.id === pipeline.build_id)?.status || t("история")}  {t("— открыть логи")}</a></p>}<div className="actions"><button disabled={busy || unresolved} onClick={() => void action(async () => { await api(`/pipelines/${pipeline.id}/run`, {}) })}>{pipeline.enabled ? t("Собрать и выпустить") : t("Собрать без выкладки")}</button><button className="secondary" disabled={busy} onClick={() => void action(async () => { await api(`/pipelines/${pipeline.id}/enabled`, { enabled: !pipeline.enabled }) })}>{pipeline.enabled ? t("Приостановить автоматизацию") : t("Включить автоматизацию")}</button></div></div>}
+        <p>{t("Текущий выпуск:")} <code>{app.currentDeployment?.slice(0, 8) || (app.kind === 'COMPOSE' ? t("существующая версия до Infra Hub") : app.kind === 'ANDROID' ? t("существующий APK до Infra Hub") : t("ещё не развёрнут"))}</code></p>
         {current && <p style={{ overflowWrap: 'anywhere' }}><code>{current.imageReference}</code></p>}
-        {!!app.environmentKeys.length && <p className="muted">Переменные: {app.environmentKeys.join(', ')}</p>}
-        <label>Образ для деплоя<select value={choices[app.id] || available[0]?.id || ''} onChange={e => setChoices(old => ({ ...old, [app.id]: e.target.value }))}><option value="" disabled>Нет опубликованных сборок</option>{available.map(b => <option key={b.id} value={b.id}>{b.source?.sha.slice(0, 12)} · {b.id.slice(0, 8)}</option>)}</select></label>
-        <div className="actions"><button disabled={busy || unresolved || !available.length} onClick={() => void action(() => launch(app, false))}>Развернуть</button><button className="secondary" disabled={busy || unresolved || !previous || !current || app.kind === 'ANDROID'} onClick={() => void action(() => launch(app, true))}>Вернуть предыдущую версию</button></div>
-        <ul className="build-list">{releases.filter(d => d.applicationId === app.id).map(d => <li key={d.id}><button className="build-row" onClick={() => setSelected(d.id)}><span>{d.id.slice(0, 8)} · {new Date(d.createdAt).toLocaleString('ru-RU')}</span><span className={`badge ${d.status.toLowerCase()}`}>{labels[d.status]}</span></button>{['QUEUED', 'RUNNING'].includes(d.status) && <button className="secondary" disabled={busy} onClick={() => void action(async () => { await api(`/deployments/${d.id}/cancel`, {}); setSelected(d.id) })}>Отменить выпуск</button>}{d.status === 'INTERRUPTED' && <button className="secondary" disabled={busy} onClick={() => void action(async () => { await api(`/deployments/${d.id}/retry`, {}); setSelected(d.id) })}>Сверить и повторить</button>}</li>)}</ul>
+        {!!app.environmentKeys.length && <p className="muted">{t("Переменные:")} {app.environmentKeys.join(', ')}</p>}
+        <label>{t("Образ для деплоя")}<select value={choices[app.id] || available[0]?.id || ''} onChange={e => setChoices(old => ({ ...old, [app.id]: e.target.value }))}><option value="" disabled>{t("Нет опубликованных сборок")}</option>{available.map(b => <option key={b.id} value={b.id}>{b.source?.sha.slice(0, 12)} · {b.id.slice(0, 8)}</option>)}</select></label>
+        <div className="actions"><button disabled={busy || unresolved || !available.length} onClick={() => void action(() => launch(app, false))}>{t("Развернуть")}</button><button className="secondary" disabled={busy || unresolved || !previous || !current || app.kind === 'ANDROID'} onClick={() => void action(() => launch(app, true))}>{t("Вернуть предыдущую версию")}</button></div>
+        <ul className="build-list">{releases.filter(d => d.applicationId === app.id).map(d => <li key={d.id}><button className="build-row" onClick={() => setSelected(d.id)}><span>{d.id.slice(0, 8)} · {new Date(d.createdAt).toLocaleString(locale())}<small className="build-meta">{t('Выполнение')}: {minutes(d.executionMillis)}</small></span><span className={`badge ${d.status.toLowerCase()}`}>{t(labels[d.status])}</span></button>{['QUEUED', 'RUNNING'].includes(d.status) && <button className="secondary" disabled={busy} onClick={() => void action(async () => { await api(`/deployments/${d.id}/cancel`, {}); setSelected(d.id) })}>{t("Отменить выпуск")}</button>}{d.status === 'INTERRUPTED' && <button className="secondary" disabled={busy} onClick={() => void action(async () => { await api(`/deployments/${d.id}/retry`, {}); setSelected(d.id) })}>{t("Сверить и повторить")}</button>}</li>)}</ul>
       </div></section>
     })}
-    {selectedRelease && <section className="panel server-card"><div className="panel-heading"><h2>Деплой {selected.slice(0, 8)}</h2><span className={`badge ${selectedRelease.status.toLowerCase()}`}>{labels[selectedRelease.status]}</span></div><div className="server-body"><p style={{ overflowWrap: 'anywhere' }}><code>{selectedRelease.imageReference}</code></p><p role="status">{selectedRelease.message}</p><div className="actions">{artifacts.map(file => <a key={file.name} href={`/api/deployments/${selected}/artifacts/${file.name}`}>{file.name} ({Math.ceil(file.size/1024)} KiB)</a>)}</div><div className="terminal"><pre aria-label="Логи деплоя">{logs || 'Ожидаем исполнитель…'}</pre></div></div></section>}
+    {selectedRelease && <section className="panel server-card"><div className="panel-heading"><h2>{t("Деплой")} {selected.slice(0, 8)}</h2><span className={`badge ${selectedRelease.status.toLowerCase()}`}>{t(labels[selectedRelease.status])}</span></div><div className="server-body"><p style={{ overflowWrap: 'anywhere' }}><code>{selectedRelease.imageReference}</code></p><RunTiming run={selectedRelease} deployment/><p role="status">{t(selectedRelease.message)}</p><div className="actions">{artifacts.map(file => <a key={file.name} href={`/api/deployments/${selected}/artifacts/${file.name}`}>{file.name} ({Math.ceil(file.size/1024)} KiB)</a>)}</div><div className="terminal"><pre aria-label={t("Логи деплоя")}>{logs || t("Ожидаем исполнитель…")}</pre></div></div></section>}
   </>
 }

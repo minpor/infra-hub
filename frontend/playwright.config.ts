@@ -5,5 +5,5 @@ export default defineConfig({
   timeout: 45000,
   workers: 1,
   outputDir: '../.local/playwright',
-  use: { baseURL: 'http://127.0.0.1:15173', viewport: { width: 1440, height: 1000 }, trace: 'retain-on-failure' },
+  use: { locale: 'ru-RU', baseURL: 'http://127.0.0.1:15173', viewport: { width: 1440, height: 1000 }, trace: 'retain-on-failure' },
 })
