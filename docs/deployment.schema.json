@@ -65,6 +65,10 @@
           "type": "string",
           "maxLength": 300,
           "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*\\.jar$"
+        },
+        "cache": {
+          "type": "boolean",
+          "description": "Override the project dependency cache setting. Omit to inherit."
         }
       }
     },

@@ -5,6 +5,8 @@ import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.`when`
+import org.mockito.Mockito.verify
+import org.mockito.Mockito.never
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.jdbc.core.JdbcTemplate
@@ -12,7 +14,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean
 import java.util.UUID
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = ["hub.scheduling-enabled=false", "spring.datasource.url=\${HUB_TEST_DATABASE_URL}"])
-class YamlPipelinesTest @Autowired constructor(private val pipelines: PipelineService, private val apps: DeploymentStore, private val queue: QueueStore, private val jdbc: JdbcTemplate) {
+class YamlPipelinesTest @Autowired constructor(private val pipelines: PipelineService, private val apps: DeploymentStore, private val queue: QueueStore, private val jdbc: JdbcTemplate, private val sources: YamlSources) {
     @MockitoBean lateinit var github: GitHub
     private lateinit var app: HubApplication
     private lateinit var project: Project
@@ -48,6 +50,22 @@ class YamlPipelinesTest @Autowired constructor(private val pipelines: PipelineSe
         val id = UUID.randomUUID()
         pipelines.registerYaml(YamlBinding(id, app.id, "main", path, source.sha))
         return id
+    }
+
+    @Test fun `editor loads invalid YAML for repair and validates before any repository write`() {
+        val path = ".infra-hub/production.yaml"
+        `when`(github.file(source, path)).thenReturn("build: [broken".toByteArray())
+        assertThat(sources.document(YamlPreviewRequest(app.id, "main", path)).yaml).isEqualTo("build: [broken")
+        assertThatThrownBy { sources.save(YamlSaveRequest(app.id, "main", path, source.sha, "build: [broken")) }.isInstanceOf(IllegalArgumentException::class.java)
+        verify(github, never()).saveYaml(source, path, "build: [broken")
+        assertThatThrownBy { sources.save(YamlSaveRequest(app.id, "main", path, "b".repeat(40), yaml)) }.isInstanceOf(Conflict::class.java)
+        verify(github, never()).saveYaml(source, path, yaml)
+        `when`(github.saveYaml(source, path, yaml)).thenReturn("c".repeat(40))
+        val saved = sources.save(YamlSaveRequest(app.id, "main", path, source.sha, yaml))
+        assertThat(saved.sha).isEqualTo("c".repeat(40))
+        assertThat(saved.yaml).isEqualTo(yaml)
+        assertThat(queue.builds()).isEmpty()
+        assertThat(pipelines.list()).isEmpty()
     }
     @Test fun `ten independent YAML files bind one application and only one may automate it`() {
         val ids = (1..10).map { register(".infra-hub/release-$it.yaml") }

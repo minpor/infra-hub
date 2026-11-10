@@ -95,3 +95,17 @@ Owner session and CSRF protect browser writes. The application binds the server 
 V10 adds YAML bindings and immutable snapshots. Existing Aukni/Java/Compose adapters and releases remain compatible. Attaching a new file does not disable a current pipeline: pause the previous automatic owner before enabling a replacement. General YAML commands can deploy Compose (including multiple `-f` files), systemd, static sites or project scripts without adding project names/paths to platform code. Extra build tools and target dependencies remain operator-provisioned.
 
 Examples: [Java image](../examples/deploy/java-image.yaml), [Compose production](../examples/deploy/compose-production.yaml), [systemd staging](../examples/deploy/systemd-staging.yaml). Adapt them to your application; they are not runnable releases for the author's infrastructure.
+
+## View and edit from the panel
+
+Each attached workflow offers **View YAML** and **Edit YAML**. The editor reads the current repository file and commit, preserves text/comments, supports switching modes without losing the draft, and validates the schema before saving. Invalid files can still be opened for repair. **Save to branch** commits the edited file to the explicit branch through the configured GitHub App; it needs **Contents: read and write**, installation access to that repository, and permission under the branch's protection rules. Read-only installations can continue viewing and running workflows. Tags and SHAs are viewable; saving requires a branch.
+
+Saving checks the previously loaded branch commit and supplies the original file blob SHA to GitHub. A changed branch or concurrent file edit is rejected; the editor retains the draft. Saving on an automated branch can trigger a release through ordinary polling. Prior build/deployment snapshots remain unchanged, and build details offer their original YAML for viewing.
+
+Use optional `build.cache: true` or `build.cache: false` for dependency caching in this workflow, or omit it to inherit the project's runner setting. Configure each project's CPU and RAM in **Settings → Runner**. See [runner settings and cache storage](runner-settings.md).
+
+Additional owner/CSRF-protected endpoints:
+
+- `POST /api/deployment-yaml/document`: `{applicationId, ref, path}` reads raw YAML, including invalid YAML.
+- `POST /api/deployment-yaml/validate`: `{yaml}` validates a draft without writing or running it.
+- `POST /api/deployment-yaml/save`: `{applicationId, ref, path, expectedSha, yaml}` validates and commits an existing file, returning its new commit and content hash.

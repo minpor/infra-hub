@@ -167,7 +167,7 @@ test('managed release uses the displayed branch and artifact when newest project
 })
 
 test('runner CPU and memory limits persist and explain when changes apply', async ({ page }) => {
-  let settings = { cpus: 6, memoryGiB: 16, maxCpus: 20, maxMemoryGiB: 18 }
+  let settings = { cpus: 6, memoryGiB: 16, maxCpus: 20, maxMemoryGiB: 18, dependencyCacheEnabled: true, inherited: false }
   await page.route('**/api/runner-settings', async route => {
     if (route.request().method() === 'POST') settings = { ...settings, ...route.request().postDataJSON() }
     await route.fulfill({ json: settings })

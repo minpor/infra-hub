@@ -61,7 +61,9 @@ class RepositoryRunner(
         val source = requireNotNull(build.source)
         if (source.artifactPath != null) publisher.configured()
         val name = "infra-hub-job-${build.id}"
-        val resources = settings.resources()
+        val resources = settings.resources(build.projectId)
+        val cacheEnabled = source.yamlRecipe?.definition?.build?.cache ?: resources.dependencyCacheEnabled
+        val cacheVolume = if (cacheEnabled) "infra-hub-dependencies-v1-${build.projectId}" else null
         fun heartbeat(): BuildStatus? = store.heartbeat(build.id, worker)
         fun checkLease() {
             when (heartbeat()) {
@@ -75,6 +77,7 @@ class RepositoryRunner(
             if (!store.startStep(build.id, worker, position)) throw ExecutionStopped(store.get(build.id).status == BuildStatus.CANCEL_REQUESTED)
         }
         start(0)
+        store.recordRunner(build.id, worker, RunnerExecution(resources.cpus, resources.memoryGiB, if (cacheEnabled) "PENDING" else "DISABLED", cacheVolume))
         log(0, "${source.repository} @ ${source.sha}\n")
         val request = HttpRequest.newBuilder(URI.create("${apiUrl.trimEnd('/')}/internal/builds/${build.id}/source"))
             .timeout(Duration.ofSeconds(100)).header("X-Worker-Id", worker.toString()).header("X-Worker-Secret", secret).GET().build()
@@ -86,20 +89,34 @@ class RepositoryRunner(
             checkLease()
             Files.write(directory.resolve("source.tar.gz"), response.body())
         } finally { download.cancel(true) }
-        // No host paths, secrets, Docker socket, persistent writable cache or direct network in the build container.
+        // Only a project-scoped dependency volume persists. No host paths, secrets, Docker socket or direct network.
         val create = docker + listOf("create", "--name", name, "--label", "$jobLabel=${build.id}",
             "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
             "--user", "10001:10001", "--cpus", resources.cpus.toString(), "--memory", "${resources.memoryGiB}g", "--memory-swap", "${resources.memoryGiB}g", "--pids-limit", "512",
             "--ulimit", "nofile=4096:4096", "--log-driver", "local", "--log-opt", "max-size=10m", "--log-opt", "max-file=2",
             "--tmpfs", "/work:rw,exec,nosuid,nodev,size=4g,uid=10001,gid=10001,mode=700",
             "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=512m,mode=1777",
-            "--mount", "type=volume,src=infra-hub-dependency-proxy,dst=/proxy,readonly",
-            "--workdir", "/work", "--env", "HOME=/work/home", "--env", "HUB_EXPECTED_MEMORY_BYTES=${resources.memoryBytes}", "--env", "HUB_EXPECTED_CPUS=${resources.cpus}", builderImage,
+            "--mount", "type=volume,src=infra-hub-dependency-proxy,dst=/proxy,readonly") +
+            (if (cacheVolume != null) listOf("--mount", "type=volume,src=$cacheVolume,dst=/cache") else emptyList()) + listOf(
+            "--workdir", "/work", "--env", "HOME=/work/home", "--env", "HUB_DEPENDENCY_CACHE=${if (cacheEnabled) "1" else "0"}",
+            "--env", "HUB_EXPECTED_MEMORY_BYTES=${resources.memoryBytes}", "--env", "HUB_EXPECTED_CPUS=${resources.cpus}", builderImage,
             "timeout", "--kill-after=5s", "2760s", "sleep", "infinity")
         try {
             checkLease()
             if (executor.run(create, directory, 30, ::heartbeat) { log(0, it) } != 0) throw RunnerFailure("Не удалось создать сборочный контейнер.")
             if (executor.run(docker + listOf("start", name), directory, 30, ::heartbeat) { log(0, it) } != 0) throw RunnerFailure("Не удалось запустить сборочный контейнер.")
+            val cacheStatus = if (cacheVolume == null) "DISABLED" else {
+                // Only inspect presence, never log filenames or contents from a previous build.
+                val existing = control("exec", name, "sh", "-eu", "-c", "test -w /cache; find /cache -type f -print -quit")
+                if (existing.isBlank()) "EMPTY" else "AVAILABLE"
+            }
+            store.recordRunner(build.id, worker, RunnerExecution(resources.cpus, resources.memoryGiB, cacheStatus, cacheVolume))
+            log(0, when (cacheStatus) {
+                "DISABLED" -> "Кэш зависимостей выключен: чистая сборка, хранилище проекта не подключено.\n"
+                "EMPTY" -> "Кэш зависимостей: пустое хранилище проекта. Загрузки сохранятся для следующих сборок.\n"
+                else -> "Кэш зависимостей: подключено хранилище проекта с сохранёнными файлами. Gradle и npm переиспользуют подходящие зависимости.\n"
+            })
+            if (cacheVolume != null) log(0, "Хранилище: $cacheVolume → /cache (Gradle distributions, Gradle dependencies, npm)\n")
             if (executor.runInput(docker + listOf("exec", "-i", name, "sh", "-c", "cat > /work/source.tar.gz"), directory, 30, directory.resolve("source.tar.gz"), ::heartbeat, { log(0, it) }) != 0) throw RunnerFailure("Не удалось передать исходники в контейнер.")
             store.completeStep(build.id, worker, 0, 0)
             start(1)

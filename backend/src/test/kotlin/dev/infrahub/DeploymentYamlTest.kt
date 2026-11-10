@@ -48,4 +48,11 @@ class DeploymentYamlTest {
             valid.replace("  verify:", "  invalidVerify:")
         ).forEach { bad -> assertThatThrownBy { parser.parse(bad) }.isInstanceOf(IllegalArgumentException::class.java) }
     }
+
+    @Test fun `cache is optional boolean and part of the parsed immutable recipe`() {
+        assertThat(parser.parse(valid).build.cache).isNull()
+        assertThat(parser.parse(valid.replace("build:", "build:\n  cache: false")).build.cache).isFalse()
+        assertThat(parser.parse(valid.replace("build:", "build:\n  cache: true")).build.cache).isTrue()
+        assertThatThrownBy { parser.parse(valid.replace("build:", "build:\n  cache: 'false'")) }.isInstanceOf(IllegalArgumentException::class.java)
+    }
 }

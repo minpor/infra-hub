@@ -11,7 +11,7 @@ import java.security.MessageDigest
 import java.util.UUID
 
 data class YamlStep(val name: String, val run: String, val timeoutSeconds: Int = 300)
-data class YamlBuild(val steps: List<YamlStep>, val artifact: String? = null)
+data class YamlBuild(val steps: List<YamlStep>, val artifact: String? = null, val cache: Boolean? = null)
 data class YamlDeploy(val directory: String, val steps: List<YamlStep>, val verify: List<YamlStep>, val rollback: List<YamlStep> = emptyList())
 data class DeploymentDefinition(val version: Int, val name: String, val build: YamlBuild, val deploy: YamlDeploy)
 data class YamlRecipe(val pipelineId: UUID, val applicationId: UUID, val path: String, val sha256: String, val yaml: String, val definition: DeploymentDefinition)
@@ -34,14 +34,15 @@ class DeploymentYaml {
             require(root["version"] is Int && root["version"] == 1) { "Unsupported deployment YAML version; expected 1" }
             val name = string(root["name"], 80)
             require(name.none(Char::isISOControl))
-            val build = obj(root["build"], setOf("steps", "artifact"))
+            val build = obj(root["build"], setOf("steps", "artifact", "cache"))
+            val cache = build["cache"]?.also { require(it is Boolean) { "build.cache must be true or false" } } as Boolean?
             val artifact = build["artifact"]?.let { string(it, 300).also(ImagePublisher::validateArtifactPath) }
             val buildSteps = steps(build["steps"])
             require(buildSteps.sumOf { it.timeoutSeconds } <= 2400) { "Combined build timeout must not exceed 2400 seconds" }
             val deploy = obj(root["deploy"], setOf("directory", "steps", "verify", "rollback"))
             val directory = string(deploy["directory"], 300)
             require(directory.startsWith('/') && java.nio.file.Path.of(directory).normalize().toString() != "/" && directory.split('/').none { it == ".." } && directory.none(Char::isISOControl)) { "Deploy directory must be an absolute application directory" }
-            val result = DeploymentDefinition(1, name, YamlBuild(buildSteps, artifact), YamlDeploy(directory, steps(deploy["steps"]), steps(deploy["verify"]), deploy["rollback"]?.let { steps(it) } ?: emptyList()))
+            val result = DeploymentDefinition(1, name, YamlBuild(buildSteps, artifact, cache), YamlDeploy(directory, steps(deploy["steps"]), steps(deploy["verify"]), deploy["rollback"]?.let { steps(it) } ?: emptyList()))
             require((result.deploy.steps + result.deploy.verify + result.deploy.rollback).sumOf { it.timeoutSeconds } <= 3600) { "Combined deploy, verify and rollback timeout must not exceed 3600 seconds" }
             require(command(result).length <= 32000) { "Combined build script is limited to 32000 characters" }
             return result

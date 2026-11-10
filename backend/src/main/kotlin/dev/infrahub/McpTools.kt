@@ -125,7 +125,7 @@ class McpTools(private val queue: QueueStore, private val apps: DeploymentStore,
             }
             "hub_rollback" -> apps.rollback(app(identity, id(args, "application_id")).id, operationId(identity, args))
             "hub_configure_pipeline" -> pipeline(identity, id(args, "pipeline_id")).let { pipelines.configure(it["id"] as UUID, args["enabled"]?.asBoolean(), args["command"]?.asText(), args["artifact_path"]?.asText()) }
-            "hub_configure_runner" -> runner.save(RunnerResources(args["cpus"].asInt(), args["memory_gib"].asInt()))
+            "hub_configure_runner" -> runner.save(runner.resources().copy(cpus = args["cpus"].asInt(), memoryGiB = args["memory_gib"].asInt()))
             "hub_create_project" -> { val nameValue = text(args, "name"); require(nameValue.length in 1..80 && nameValue.none(Char::isISOControl)); queue.createProject(NewProject(nameValue, text(args, "repository_url"))) }
             "hub_create_application" -> mapper.treeToValue(args["application"], NewApplication::class.java).let { identity.requireProject(it.projectId); apps.create(it) }
             "hub_create_pipeline" -> mapper.treeToValue(args["pipeline"], NewPipeline::class.java).let { input -> app(identity, input.applicationId); pipelines.list().firstOrNull { it["id"] == input.id }?.let { app(identity, it["application_id"] as UUID) }; pipelines.create(input) }

@@ -28,7 +28,8 @@ data class Build(
     val finishedAt: Instant?,
     val message: String?,
     val source: SourceSnapshot? = null,
-    val image: PublishedImage? = null
+    val image: PublishedImage? = null,
+    val runnerExecution: RunnerExecution? = null
 )
 data class Step(
     val position: Int,
@@ -45,3 +46,5 @@ class MissingResource : RuntimeException()
 class Conflict(val explanation: String) : RuntimeException(explanation)
 
 data class PublishedImage(val reference: String, val artifactSha256: String, val artifactSize: Long)
+
+data class RunnerExecution(val cpus: Int, val memoryGiB: Int, val cacheStatus: String, val cacheVolume: String? = null)

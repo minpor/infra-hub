@@ -25,7 +25,8 @@ class QueueStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemp
         rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("started_at")?.toInstant(),
         rs.getTimestamp("finished_at")?.toInstant(), rs.getString("message"),
         rs.getString("repository")?.let { SourceSnapshot(it, rs.getString("source_ref"), rs.getString("commit_sha"), rs.getString("build_command"), rs.getString("artifact_path"), rs.getString("yaml_recipe")?.let { yaml -> mapper.readValue(yaml, YamlRecipe::class.java) }) },
-        rs.getString("image_reference")?.let { PublishedImage(it, rs.getString("artifact_sha256"), rs.getLong("artifact_size")) }
+        rs.getString("image_reference")?.let { PublishedImage(it, rs.getString("artifact_sha256"), rs.getLong("artifact_size")) },
+        rs.getString("runner_execution")?.let { mapper.readValue(it, RunnerExecution::class.java) }
     )
 
     fun projects(): List<Project> = jdbc.query("SELECT * FROM projects ORDER BY created_at DESC, id") { rs, _ ->
@@ -88,6 +89,13 @@ class QueueStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemp
         """.trimIndent(), image.reference, image.artifactSha256, image.artifactSize, id, worker) != 1) {
             throw ExecutionStopped(false)
         }
+    }
+
+    fun recordRunner(id: UUID, worker: UUID, execution: RunnerExecution) {
+        if (jdbc.update("""
+            UPDATE builds SET runner_execution=?::jsonb
+            WHERE id=? AND worker_id=? AND status='RUNNING' AND lease_until > clock_timestamp()
+        """.trimIndent(), mapper.writeValueAsString(execution), id, worker) != 1) throw ExecutionStopped(false)
     }
 
     fun cancel(id: UUID): Build = tx.execute {

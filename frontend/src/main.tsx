@@ -42,11 +42,16 @@ function BuildView({ id, onCancel }: { id: string; onCancel: (id: string) => Pro
     <div className="panel-heading"><div><span className="eyebrow">{t("СБОРКА /")} {id.slice(0, 8)}</span><h2>{detail?.build.source ? t("Сборка репозитория") : t("Проверка исполнителя")}</h2></div>{detail && <Badge status={detail.build.status}/>}</div>
     <p className="muted">{detail?.build.source ? `${detail.build.source.repository} · ${detail.build.source.ref} · ${detail.build.source.sha.slice(0, 12)}` : t("Встроенный Java-пример · компиляция → тесты → JAR")}</p>
     {detail && <RunTiming run={detail.build}/>}
+    {detail?.build.runnerExecution && <div className="build-execution">
+      <div><span className="eyebrow">{t('РЕСУРСЫ СБОРКИ')}</span><strong>{detail.build.runnerExecution.cpus} CPU · {detail.build.runnerExecution.memoryGiB} GiB</strong></div>
+      <div><span className="eyebrow">{t('КЭШ ЗАВИСИМОСТЕЙ')}</span><strong>{t(({ DISABLED: 'Выключен · чистая сборка', PENDING: 'Подключается', EMPTY: 'Пустой · первый запуск', AVAILABLE: 'Подключён · есть сохранённые файлы' } as Record<string, string>)[detail.build.runnerExecution.cacheStatus] || detail.build.runnerExecution.cacheStatus)}</strong></div>
+      {detail.build.runnerExecution.cacheVolume && <p className="muted">{t('Хранилище проекта')}: <code>{detail.build.runnerExecution.cacheVolume}</code><br/>{t('Gradle и npm проверяют, какие зависимости можно использовать повторно.')}</p>}
+    </div>}
     {error && <p role="alert" className="error">{t(error)}</p>}
     {!detail && <p>{t("Загружаем сборку…")}</p>}
     <ol className="steps">{detail?.steps.map(step => <li key={step.position}><span className="step-number">{step.position + 1}</span><strong>{t(step.name)}</strong><Badge status={step.status}/></li>)}</ol>
     <div className="terminal"><div className="terminal-head"><span>{t("ВЫВОД ПРОЦЕССОВ")}</span><span>live / stdout + stderr</span></div><pre aria-label={t("Логи сборки")}>{logs.length ? logs.map(log => log.text).join('') : t("Ожидаем вывод worker…")}</pre></div>
-    {detail?.build.source?.yamlRecipe && <div className="result"><strong>{t('Конфигурация YAML')}</strong><p><code>{detail.build.source.yamlRecipe.path}</code></p><p className="muted">SHA-256: <code>{detail.build.source.yamlRecipe.sha256}</code></p></div>}
+    {detail?.build.source?.yamlRecipe && <div className="result"><strong>{t('Конфигурация YAML')}</strong><p><code>{detail.build.source.yamlRecipe.path}</code></p><p className="muted">SHA-256: <code>{detail.build.source.yamlRecipe.sha256}</code></p>{detail.build.source.yamlRecipe.yaml && <details><summary>{t('Просмотр YAML этой сборки')}</summary><pre className="config-preview">{detail.build.source.yamlRecipe.yaml}</pre></details>}</div>}
     {detail?.build.image && <div className="result"><strong>{t("Опубликованный образ")}</strong><p style={{ overflowWrap: 'anywhere' }}><code>{detail.build.image.reference}</code></p><p className="muted">JAR: {Math.ceil(detail.build.image.artifactSize / 1024)} KiB · SHA-256: <code style={{ overflowWrap: 'anywhere' }}>{detail.build.image.artifactSha256}</code></p></div>}
     {detail?.build.message && <p className="result" role="status">{t(detail.build.message)}</p>}
     {detail && active(detail.build.status) && <button className="secondary" disabled={busy || detail.build.status === 'CANCEL_REQUESTED'} onClick={async () => {

@@ -17,7 +17,7 @@ The software does not require a subscription or purchased CI minutes. You provid
 | Projects | GitHub repository links, search, build history and exact commit snapshots |
 | Queue | PostgreSQL-backed jobs, idempotent enqueue, execution leases, cancellation and interrupted-job recovery |
 | Builds | Separate worker; disposable Java 21 / Node.js containers on a rootless Docker daemon |
-| Visibility | Persisted steps/logs, build/deployment minutes, queue wait and runner CPU/RAM settings |
+| Visibility | Persisted steps/logs, build/deployment minutes, queue wait and per-project runner CPU/RAM settings and dependency cache state |
 | Images | Package one executable JAR with a platform-owned Dockerfile, push to a registry and retain its digest |
 | Servers | Dedicated SSH keys, host fingerprint confirmation, connection checks and measured CPU/RAM/disk snapshots |
 | Deployments | Transfer images over SSH, verify imported content, check HTTP health, retain history and roll back supported deployments |
@@ -111,7 +111,7 @@ The server configuration is source-built: prebuilt public Infra Hub images and a
 - Repository command timeout: 40 minutes; 512 processes; 4 GiB `/work` and 512 MiB `/tmp` tmpfs within the job memory limit. CPU/RAM defaults: 6 CPU / 16 GiB, adjustable in the UI. These are job settings, not minimum panel requirements.
 - Build network access goes through an explicit HTTPS dependency allowlist; arbitrary hosts, private registries and extra toolchains require operator changes.
 - General image publishing takes one JAR up to 256 MiB; it does not execute repository Dockerfiles. Deployment image transfer is limited to 2 GiB.
-- No automatic log/image retention, shared dependency cache, PR status publishing, release tags, GitHub Actions YAML engine, Kubernetes support or HA installation.
+- No automatic log/image retention, PR status publishing, release tags, GitHub Actions YAML engine, Kubernetes support or HA installation.
 - Rollback does not undo database migrations or external side effects. Interrupted deployments require reconciliation of the same deployment ID.
 - Runtime environment values are stored in PostgreSQL and are **not encrypted at rest by the application**. Protect the database, volumes and backups.
 
@@ -127,7 +127,7 @@ python3 -m unittest discover -s scripts -p 'test_*.py'
 
 The main check creates a temporary PostgreSQL database, runs backend tests, builds the frontend, and exercises real API/worker restarts and Playwright flows. It needs PostgreSQL server binaries (`initdb`, `pg_ctl`, `createdb`, `pg_config`), available local ports, and a non-root user. `PG_BIN`, `HUB_TEST_DB_PORT`, and `HUB_TEST_API_PORT` can override local defaults. Use `./scripts/check.sh --backend-only` for JVM checks only.
 
-See [local development](docs/local-development.md), [contribution guide](CONTRIBUTING.md), and [security policy](SECURITY.md). Integration scripts that contact an existing server are opt-in and are not part of this local check.
+See [runner resources and cache](docs/runner-settings.md), [local development](docs/local-development.md), [contribution guide](CONTRIBUTING.md), and [security policy](SECURITY.md). Integration scripts that contact an existing server are opt-in and are not part of this local check.
 
 ## Repository map
 

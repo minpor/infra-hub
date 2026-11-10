@@ -45,17 +45,22 @@ class RepositoryFailure(message: String) : RuntimeException(message)
 @Component
 class GitHubHttp {
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build()
-    fun get(uri: URI, token: String? = null, body: String? = null, limit: Int = 2 * 1024 * 1024): Pair<Int, ByteArray> {
+    fun get(uri: URI, token: String? = null, body: String? = null, limit: Int = 2 * 1024 * 1024): Pair<Int, ByteArray> =
+        exchange(uri, token, body, limit, if (body == null) "GET" else "POST")
+
+    fun put(uri: URI, token: String, body: String): Pair<Int, ByteArray> = exchange(uri, token, body, 2 * 1024 * 1024, "PUT")
+
+    private fun exchange(uri: URI, token: String?, body: String?, limit: Int, method: String): Pair<Int, ByteArray> {
         require(uri.scheme == "https" && uri.host in setOf("api.github.com", "codeload.github.com") && uri.port == -1 && uri.userInfo == null)
         val builder = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(90))
             .header("Accept", "application/vnd.github+json").header("User-Agent", "Infra-Hub")
         if (token != null) builder.header("Authorization", "Bearer $token")
-        if (body != null) builder.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body))
+        if (body != null) builder.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofString(body))
         // ofByteArray honours the request timeout through the entire response; the subscriber also bounds memory.
         val response = try { client.send(builder.build(), limitedBody(limit)) }
         catch (error: Exception) { throw RepositoryFailure("Не удалось связаться с GitHub или получить ответ допустимого размера. Повторите запрос позже.") }
         if (response.statusCode() == 302) {
-            require(uri.host == "api.github.com")
+            require(uri.host == "api.github.com" && method == "GET")
             val target = URI.create(response.headers().firstValue("Location").orElseThrow())
             require(target.scheme == "https" && target.host == "codeload.github.com" && target.port == -1 && target.userInfo == null)
             // Signed archive redirect is a credential: never log it or forward the Authorization header.
@@ -102,17 +107,20 @@ class GitHub(
         }
     }
 
-    private fun token(repository: String): String? {
-        if (!configured()) return null
+    private fun token(repository: String, write: Boolean = false): String? {
+        if (!configured()) {
+            if (write) throw RepositoryFailure("Для сохранения YAML настройте GitHub App с правом Contents: read and write.")
+            return null
+        }
         // Public repositories don't require installation membership or private credentials.
-        if (http.get(URI.create("https://api.github.com/repos/$repository")).first == 200) return null
+        if (!write && http.get(URI.create("https://api.github.com/repos/$repository")).first == 200) return null
         require(installationId.matches(Regex("[0-9]+")))
         // Check the app's installation belongs to this repository before issuing a narrowly scoped token.
         val jwt = jwt()
         val actual = request("/repos/$repository/installation", jwt)["id"].asText()
         if (actual != installationId) throw RepositoryFailure("Репозиторий не входит в настроенную установку GitHub App.")
         return request("/app/installations/$installationId/access_tokens", jwt,
-            json.writeValueAsString(mapOf("repositories" to listOf(repository.substringAfter('/')), "permissions" to mapOf("contents" to "read"))))["token"].asText()
+            json.writeValueAsString(mapOf("repositories" to listOf(repository.substringAfter('/')), "permissions" to mapOf("contents" to if (write) "write" else "read"))))["token"].asText()
     }
 
     fun resolve(url: String, ref: String, command: String): SourceSnapshot {
@@ -132,6 +140,28 @@ class GitHub(
         val node = request("/repos/${source.repository}/contents/$path?ref=${source.sha}", token(source.repository))
         require(node["encoding"].asText() == "base64")
         return Base64.getMimeDecoder().decode(node["content"].asText())
+    }
+
+    fun saveYaml(source: SourceSnapshot, path: String, yaml: String): String {
+        DeploymentYaml().path(path)
+        require(yaml.toByteArray().size <= 65536)
+        val encodedRef = URLEncoder.encode(source.ref, Charsets.UTF_8).replace("+", "%20")
+        val access = token(source.repository, write = true)!!
+        // A tag/SHA can be viewed, but saving must name an existing branch explicitly.
+        val branch = request("/repos/${source.repository}/git/ref/heads/$encodedRef", access)
+        if (branch.path("object").path("sha").asText() != source.sha) throw Conflict("Ветка изменилась. Загрузите YAML заново; ваши правки остаются в редакторе.")
+        val file = request("/repos/${source.repository}/contents/$path?ref=${source.sha}", access)
+        val body = json.writeValueAsString(mapOf(
+            "message" to "Update $path via Infra Hub", "branch" to source.ref,
+            "sha" to file.path("sha").asText(), "content" to Base64.getEncoder().encodeToString(yaml.toByteArray())
+        ))
+        val (status, bytes) = http.put(URI.create("https://api.github.com/repos/${source.repository}/contents/$path"), access, body)
+        when (status) {
+            200 -> return json.readTree(bytes).path("commit").path("sha").asText().also { require(it.matches(Regex("[0-9a-f]{40}"))) }
+            409 -> throw Conflict("Файл изменился. Загрузите YAML заново; ваши правки остаются в редакторе.")
+            401, 403, 404, 422 -> throw RepositoryFailure("Не удалось сохранить YAML. Проверьте право GitHub App Contents: read and write и правила защиты ветки.")
+            else -> throw RepositoryFailure("Не удалось сохранить YAML (HTTP $status). Проверьте ветку перед повтором.")
+        }
     }
 
     fun directorySha(source: SourceSnapshot, path: String): String {

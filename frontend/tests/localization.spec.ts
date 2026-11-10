@@ -14,7 +14,7 @@ test('language choice translates every screen and persists across reloads', asyn
   await page.getByRole('link', { name: 'Applications', exact: true }).click()
   await expect(page.getByRole('button', { name: '＋ New application' })).toBeVisible()
   await page.getByRole('link', { name: 'Settings', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Runner resources' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Build resources and cache' })).toBeVisible()
   await page.getByRole('link', { name: 'MCP', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'MCP for agents' })).toBeVisible()
   await page.getByLabel('Language / Язык').selectOption('ru')

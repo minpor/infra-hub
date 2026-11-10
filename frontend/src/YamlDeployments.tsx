@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { api } from './api'
 import { t, useLanguage } from './i18n'
+import { YamlEditor } from './YamlEditor'
 
 export type YamlPipeline = { id: string; application_id: string; ref: string; enabled: boolean; config_path?: string | null; last_sha: string | null; build_id: string | null; deployment_id: string | null; message: string | null }
 type App = { id: string; name: string; projectId: string }
@@ -16,6 +17,7 @@ export function YamlDeployments({ apps, pipelines, onUpdate }: { apps: App[]; pi
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [editor, setEditor] = useState<{ id: string; mode: 'view' | 'edit' } | null>(null)
   const bindingId = useRef(crypto.randomUUID())
   const requests = useRef(new Map<string, string>())
   async function action(task: () => Promise<void>) {
@@ -48,16 +50,17 @@ export function YamlDeployments({ apps, pipelines, onUpdate }: { apps: App[]; pi
       </div>}
       {bindings.length === 0 && !open && <p className="empty">{t('YAML ещё не подключены. Создайте приложение и укажите файл из его репозитория.')}</p>}
       {bindings.map(p => <article className="yaml-binding" key={p.id}>
-        <h3>{apps.find(a => a.id === p.application_id)?.name} · <code>{p.config_path}</code></h3>
-        <p className="muted">{p.ref} · {p.enabled ? t('Автоматизация включена') : t('Ручной запуск')} · {p.last_sha?.slice(0, 12) || t('ещё не было')}</p>
+        <div className="yaml-binding-heading"><div><span className="eyebrow">{apps.find(a => a.id === p.application_id)?.name}</span><h3><code>{p.config_path}</code></h3></div><span className={`badge ${p.enabled ? 'running' : ''}`}>{p.enabled ? t('Автоматизация включена') : t('Ручной запуск')}</span></div>
+        <p className="yaml-binding-meta"><span>⑂ {p.ref}</span><span>{t('Последний запуск')}: {p.last_sha?.slice(0, 12) || t('ещё не было')}</span></p>
         {p.message && <p role="status">{t(p.message)}</p>}
         {p.build_id && <a href={`#builds/${p.build_id}`}>{t('Открыть сборку')}</a>}
-        <div className="actions"><button disabled={busy} onClick={() => void action(async () => {
+        <div className="actions"><button className="secondary" disabled={editor !== null} onClick={() => setEditor({ id: p.id, mode: 'view' })}>{t('Просмотр YAML')}</button><button className="secondary" disabled={editor !== null} onClick={() => setEditor({ id: p.id, mode: 'edit' })}>{t('Редактировать YAML')}</button><button disabled={busy || editor !== null} onClick={() => void action(async () => {
           const requestId = requests.current.get(p.id) || crypto.randomUUID(); requests.current.set(p.id, requestId)
           const build = await api<{ id: string }>(`/pipelines/${p.id}/release`, { requestId })
           requests.current.delete(p.id); await onUpdate(); setMessage('Выпуск поставлен в очередь. Результат сборки и деплоя отслеживается отдельно.')
           if (!build.id) throw new Error('Build response is missing an ID')
-        })}>{t('Запустить YAML-выпуск')}</button><button className="secondary" disabled={busy} onClick={() => void action(async () => { await api(`/pipelines/${p.id}/enabled`, { enabled: !p.enabled }); await onUpdate() })}>{p.enabled ? t('Приостановить автоматизацию') : t('Включить автоматизацию')}</button></div>
+        })}>{t('Запустить YAML-выпуск')}</button><button className="secondary" disabled={busy || editor !== null} onClick={() => void action(async () => { await api(`/pipelines/${p.id}/enabled`, { enabled: !p.enabled }); await onUpdate() })}>{p.enabled ? t('Приостановить автоматизацию') : t('Включить автоматизацию')}</button></div>
+        {editor?.id === p.id && <YamlEditor key={p.id} applicationId={p.application_id} sourceRef={p.ref} path={p.config_path!} automated={p.enabled} initialMode={editor.mode} onClose={() => setEditor(null)}/>}
       </article>)}
     </div>
   </section>

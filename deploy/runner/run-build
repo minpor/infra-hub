@@ -10,7 +10,16 @@ export HTTP_PROXY=http://127.0.0.1:18080 HTTPS_PROXY=http://127.0.0.1:18080
 export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY"
 export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost
 export GRADLE_USER_HOME=/work/home/gradle
-export GRADLE_OPTS='-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=18080 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=18080 -Dhttp.nonProxyHosts=localhost|127.* -Dorg.gradle.workers.max=4'
+export GRADLE_OPTS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=18080 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=18080 -Dhttp.nonProxyHosts=localhost|127.* -Dorg.gradle.workers.max=$HUB_EXPECTED_CPUS"
+if [ "${HUB_DEPENDENCY_CACHE:-0}" = 1 ]; then
+    # Persist downloaded distributions/dependencies, not Gradle user settings or credentials.
+    mkdir -p /cache/gradle/caches /cache/gradle/wrapper /cache/npm "$GRADLE_USER_HOME"
+    ln -s /cache/gradle/caches "$GRADLE_USER_HOME/caches"
+    ln -s /cache/gradle/wrapper "$GRADLE_USER_HOME/wrapper"
+    export npm_config_cache=/cache/npm
+else
+    export npm_config_cache=/work/home/npm
+fi
 # Parsing untrusted archive paths happens only in the disposable, networkless container.
 tar --extract --gzip --file=/work/source.tar.gz --directory=/work/repository --strip-components=1 --no-same-owner --no-same-permissions
 rm /work/source.tar.gz

@@ -21,6 +21,18 @@ class QueueStoreTest @Autowired constructor(private val store: QueueStore, priva
     }
     private fun project() = store.createProject(NewProject("Test ${UUID.randomUUID()}"))
 
+    @Test fun `actual runner resources and cache state persist and only the lease owner can record them`() {
+        val build = store.enqueue(project().id, UUID.randomUUID(), SourceSnapshot("owner/project", "main", "a".repeat(40), "true"))
+        val owner = UUID.randomUUID()
+        store.claim(owner)
+        val execution = RunnerExecution(12, 18, "AVAILABLE", "infra-hub-dependencies-v1-${build.projectId}")
+        store.recordRunner(build.id, owner, execution)
+        assertThatThrownBy { store.recordRunner(build.id, UUID.randomUUID(), execution.copy(cacheStatus = "DISABLED")) }.isInstanceOf(ExecutionStopped::class.java)
+        store.finish(build.id, owner, BuildStatus.SUCCEEDED, "ok")
+        assertThat(store.get(build.id).runnerExecution).isEqualTo(execution)
+        assertThatThrownBy { store.recordRunner(build.id, owner, execution) }.isInstanceOf(ExecutionStopped::class.java)
+    }
+
     @Test fun `repository snapshot survives retry with a changed branch and command`() {
         val project = project()
         val request = UUID.randomUUID()

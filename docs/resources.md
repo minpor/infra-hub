@@ -6,4 +6,4 @@ Repository jobs initially request 6 CPU / 16 GiB, with default API ceilings of 2
 
 Job RAM includes tmpfs, page cache and all compiler/test processes. Gradle heap plus Kotlin daemon, browsers and Android tooling can exceed the JVM heap alone. The 4 GiB work tmpfs also bounds source extraction and outputs. Track cold/repeated build time, queue wait, peak memory, disk growth and image transfer sizes.
 
-One heavy build runs at a time; more worker processes do not create more queue slots. There is no shared dependency cache or automatic artifact/registry retention. Storage sizing must include rollback images, logs and external backups. No cost or performance guarantee is made for arbitrary workloads.
+One heavy build runs at a time; more worker processes do not create more queue slots. Dependency caches persist per project and can be disabled; there is no automatic cache/artifact/registry retention. Storage sizing must include rollback images, logs and external backups. No cost or performance guarantee is made for arbitrary workloads.
