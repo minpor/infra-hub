@@ -2,6 +2,7 @@ package dev.infrahub
 
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -11,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.bean.override.mockito.MockitoBean
+import java.time.Duration
 import java.util.UUID
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = ["hub.scheduling-enabled=false", "spring.datasource.url=\${HUB_TEST_DATABASE_URL}"])
@@ -29,6 +31,15 @@ class PipelinesTest @Autowired constructor(private val pipelines: PipelineServic
             "root" to "/opt/fixture", "composeFile" to "docker-compose.yml", "service" to "app", "webService" to "", "proxy" to "", "site" to "/opt/fixture/site", "url" to "https://fixture.example", "ref" to "main"
         )))
     }
+    // tick() returns before its virtual thread completes. Retry a tick after the
+    // preceding pass becomes idle instead of assuming a fixed sleep is sufficient.
+    private fun awaitPipeline(assertion: () -> Unit) {
+        await().pollDelay(Duration.ZERO).pollInterval(Duration.ofMillis(50)).atMost(Duration.ofSeconds(10)).untilAsserted {
+            pipelines.tick()
+            assertion()
+        }
+    }
+
     @Test fun `managed app keeps environment remote and gates source branch`() {
         assertThat(app.hostPort).isNull()
         val input = NewPipeline(UUID.randomUUID(), app.id, "dev", "build", "app.jar")
@@ -49,9 +60,7 @@ class PipelinesTest @Autowired constructor(private val pipelines: PipelineServic
         Thread.sleep(300)
         assertThat(apps.list()).isEmpty()
         pipelines.enabled(id, true)
-        pipelines.tick()
-        repeat(30) { if (apps.list().isEmpty()) Thread.sleep(100) }
-        assertThat(apps.list()).hasSize(1)
+        awaitPipeline { assertThat(apps.list()).hasSize(1) }
         assertThat(apps.list().single().buildId).isEqualTo(b.id)
     }
 
@@ -63,23 +72,18 @@ class PipelinesTest @Autowired constructor(private val pipelines: PipelineServic
         pipelines.create(NewPipeline(id, selected.id, ref, "build", "app.jar", enabled = true))
         val source = SourceSnapshot("owner/repo", ref, "c".repeat(40), "build")
         `when`(github.resolve("https://github.com/owner/repo", ref, "build")).thenReturn(source)
-        pipelines.tick()
-        repeat(50) { if (pipelines.list().single()["build_id"] == null) Thread.sleep(50) }
+        awaitPipeline { assertThat(pipelines.list().single()["build_id"]).isNotNull() }
         val first = pipelines.list().single()["build_id"] as UUID
         assertThat(queue.get(first).source?.sha).isEqualTo(source.sha)
         jdbc.update("UPDATE builds SET status='SUCCEEDED',image_reference='image@sha256:abc',artifact_sha256=repeat('a',64),artifact_size=1 WHERE id=?", first)
-        Thread.sleep(100)
-        pipelines.tick()
-        repeat(50) { if (apps.list().isEmpty()) Thread.sleep(50) }
+        awaitPipeline { assertThat(apps.list()).hasSize(1) }
         val owner = UUID.randomUUID()
         val release = apps.claim(owner)!!
         assertThat(release.applicationId).isEqualTo(selected.id)
         apps.finish(release.id, owner, "SUCCEEDED", "Ready")
         `when`(github.resolve("https://github.com/owner/repo", ref, "build")).thenReturn(source.copy(sha = "d".repeat(40)))
         jdbc.update("UPDATE pipelines SET checked_at=clock_timestamp()-interval '2 minutes' WHERE id=?", id)
-        Thread.sleep(100)
-        pipelines.tick()
-        repeat(50) { if (pipelines.list().single()["build_id"] == first) Thread.sleep(50) }
+        awaitPipeline { assertThat(pipelines.list().single()["build_id"]).isNotEqualTo(first) }
         val next = queue.get(pipelines.list().single()["build_id"] as UUID)
         assertThat(next.id).isNotEqualTo(first)
         assertThat(next.source?.sha).isEqualTo("d".repeat(40))
