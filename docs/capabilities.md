@@ -4,6 +4,8 @@ This describes the current source, not a guarantee that every combination of hos
 
 ## General functionality
 
+[Deployment YAML](deployment-yaml.md) defines project-specific build/deploy/verify/rollback shell steps, with multiple bindings, exact source snapshots, optional JAR images and a generic SSH executor. It supports pinned SSH-only targets for SCRIPT applications.
+
 - Projects, repository links, exact SHA source snapshots, persisted build steps/logs and cancellation.
 - PostgreSQL queue with transactional claim, one active heavy build, execution lease, stale-worker fencing, request UUID idempotency and explicit interrupted states.
 - Real local Java example. Repository executor uses a separate rootless Docker daemon with cgroup v2. General builder provides Java 21, Node.js 22 and Python 3.

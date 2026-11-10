@@ -24,3 +24,7 @@ See [self-hosting](docs/self-hosting.md) for network exposure, permissions, upda
 ## По-русски
 
 Уязвимости сообщайте через приватный GitHub Report a vulnerability, если он доступен. Иначе создайте issue с просьбой о приватном канале без деталей эксплуатации. Не прикладывайте действующие ключи и данные чужих серверов. Локальный профиль нельзя публиковать в сеть; production рассчитан на одного владельца. БД, SSH volume и backups требуют защиты, runtime environment не шифруется приложением. Полная изоляция произвольного чужого кода не заявлена.
+
+## YAML release authority
+
+Repository-owned deploy/verify/rollback steps run as the application’s configured SSH user. Review repository write access and YAML changes as release authority. Build sandbox restrictions do not sandbox remote deployment commands. Verification must be read-only/idempotent; arbitrary scripts and database migrations cannot be given automatic transactional rollback. See [the YAML guide](docs/deployment-yaml.md).

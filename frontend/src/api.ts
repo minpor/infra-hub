@@ -1,6 +1,6 @@
 export type Status = 'QUEUED' | 'RUNNING' | 'CANCEL_REQUESTED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED'
 export type Project = { id: string; name: string; repositoryUrl: string | null; createdAt: string }
-export type Build = { id: string; projectId: string; status: Status; recipe: string; createdAt: string; startedAt: string | null; finishedAt: string | null; message: string | null; source: { repository: string; ref: string; sha: string; command: string; artifactPath: string | null } | null; image: { reference: string; artifactSha256: string; artifactSize: number } | null }
+export type Build = { id: string; projectId: string; status: Status; recipe: string; createdAt: string; startedAt: string | null; finishedAt: string | null; message: string | null; source: { repository: string; ref: string; sha: string; command: string; artifactPath: string | null; yamlRecipe?: { pipelineId: string; applicationId: string; path: string; sha256: string } | null } | null; image: { reference: string; artifactSha256: string; artifactSize: number } | null }
 export type Step = { position: number; name: string; status: Status; exitCode: number | null }
 export type Detail = { build: Build; steps: Step[] }
 export type Log = { id: number; stepPosition: number; text: string; createdAt: string }

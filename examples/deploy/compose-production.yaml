@@ -1,0 +1,34 @@
+# The target directory is an existing checkout with Git/Docker credentials set
+# up by its owner. No GitHub token or SSH key is copied from the hub to scripts.
+version: 1
+name: Compose production
+build:
+  steps:
+    - name: Application tests
+      run: sh ./scripts/test.sh
+      timeoutSeconds: 900
+
+deploy:
+  directory: /srv/example
+  steps:
+    - name: Record rollback revision
+      run: git rev-parse HEAD > /srv/example.previous-revision
+      timeoutSeconds: 30
+    - name: Deploy the tested commit
+      run: |
+        git fetch origin
+        git checkout --detach "$HUB_COMMIT_SHA"
+        docker compose -f compose.yaml -f compose.production.yaml up -d --build
+      timeoutSeconds: 900
+  verify:
+    - name: Confirm the running commit
+      run: |
+        test "$(git rev-parse HEAD)" = "$HUB_COMMIT_SHA"
+        curl --fail --silent http://127.0.0.1:8080/version | grep -F "$HUB_COMMIT_SHA"
+      timeoutSeconds: 60
+  rollback:
+    - name: Restore the previous revision
+      run: |
+        git checkout --detach "$(cat /srv/example.previous-revision)"
+        docker compose -f compose.yaml -f compose.production.yaml up -d --build
+      timeoutSeconds: 900

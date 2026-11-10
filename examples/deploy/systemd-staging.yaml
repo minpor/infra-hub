@@ -1,0 +1,35 @@
+# Adapt service paths and the version/health endpoints to your project.
+version: 1
+name: Systemd staging
+build:
+  steps:
+    - name: Verify source
+      run: sh ./scripts/test.sh
+      timeoutSeconds: 300
+
+deploy:
+  directory: /srv/example-staging
+  steps:
+    - name: Save the previous revision
+      run: git rev-parse HEAD > /srv/example-staging.previous-revision
+      timeoutSeconds: 30
+    - name: Update service
+      run: |
+        git fetch origin
+        git checkout --detach "$HUB_COMMIT_SHA"
+        sh ./deploy/install-staging.sh
+        systemctl --user restart example-staging.service
+      timeoutSeconds: 300
+  verify:
+    - name: Service health
+      run: |
+        systemctl --user is-active --quiet example-staging.service
+        curl --fail --silent http://127.0.0.1:8081/version | grep -F "$HUB_COMMIT_SHA"
+      timeoutSeconds: 30
+  rollback:
+    - name: Restore service
+      run: |
+        git checkout --detach "$(cat /srv/example-staging.previous-revision)"
+        sh ./deploy/install-staging.sh
+        systemctl --user restart example-staging.service
+      timeoutSeconds: 300

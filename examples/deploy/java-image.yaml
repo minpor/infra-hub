@@ -1,0 +1,47 @@
+# Replace commands, paths, container name and ports for your application.
+version: 1
+name: Java service production
+build:
+  steps:
+    - name: Test and package
+      run: sh ./gradlew --no-daemon test bootJar
+      timeoutSeconds: 900
+  artifact: build/libs/service.jar
+
+deploy:
+  directory: /srv/service
+  steps:
+    - name: Remember the previous image
+      run: |
+        if docker inspect service >/dev/null 2>&1; then
+          docker inspect --format '{{.Image}}' service > previous-image
+        else
+          : > previous-image
+        fi
+      timeoutSeconds: 30
+    - name: Start the exact imported image
+      run: |
+        docker rm -f service 2>/dev/null || true
+        docker run -d --name service --restart unless-stopped \
+          -p 127.0.0.1:18090:8080 \
+          --label dev.infrahub.revision="$HUB_COMMIT_SHA" "$HUB_IMAGE_ID"
+      timeoutSeconds: 60
+  verify:
+    - name: Verify image and HTTP health
+      run: |
+        test "$(docker inspect --format '{{.Image}}' service)" = "$HUB_IMAGE_ID"
+        for attempt in $(seq 1 30); do
+          if curl --fail --silent http://127.0.0.1:18090/health; then exit 0; fi
+          sleep 2
+        done
+        exit 1
+      timeoutSeconds: 90
+  rollback:
+    - name: Restore the previous image
+      run: |
+        docker rm -f service 2>/dev/null || true
+        if test -s previous-image; then
+          docker run -d --name service --restart unless-stopped \
+            -p 127.0.0.1:18090:8080 "$(cat previous-image)"
+        fi
+      timeoutSeconds: 60

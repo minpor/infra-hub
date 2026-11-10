@@ -27,6 +27,8 @@ The software does not require a subscription or purchased CI minutes. You provid
 
 General publication supports executable JARs. Existing Compose applications can use an advanced adapter with specific layout and health-check assumptions. Android signing/publication and several build helpers are currently **Aukni-specific integrations**, rather than a general mobile CI service. See [capabilities and limits](docs/capabilities.md).
 
+Use [repository-owned deployment YAML](docs/deployment-yaml.md) for per-project build, deploy, verify and rollback steps. Attach multiple files for different services/environments; image publication is optional.
+
 ## How it fits together
 
 ```text

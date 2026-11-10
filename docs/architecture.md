@@ -31,3 +31,5 @@ Deployments have separate leases and remote receipts. After a lost SSH reply, re
 Only API handles OAuth/App source credentials; only API/deployer see SSH keys. Repository code gets source bytes and restricted dependency egress. API has no Docker socket. These controls do not establish a public multi-tenant security boundary. Runtime environment values are unencrypted in PostgreSQL; protect DB/volume backups. See [security policy](../SECURITY.md).
 
 See [capabilities](capabilities.md), [self-hosting](self-hosting.md), [deployment protocol](deployments.md) and [MCP](mcp.md).
+
+Repository-owned [YAML workflows](deployment-yaml.md) are resolved at the source SHA and snapshotted with builds and deployments. The generic executor runs owner-configured shell steps with the bound target SSH account; it uses receipts and replays verification only after uncertainty. Build containers still have no SSH credentials.

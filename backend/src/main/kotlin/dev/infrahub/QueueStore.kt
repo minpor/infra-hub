@@ -1,5 +1,7 @@
 package dev.infrahub
 
+import com.fasterxml.jackson.databind.ObjectMapper
+
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
@@ -7,7 +9,7 @@ import java.sql.ResultSet
 import java.util.UUID
 
 @Repository
-class QueueStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemplate) {
+class QueueStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemplate, private val mapper: ObjectMapper) {
     fun overview(): Map<String, Long> = mapOf(
         "projects" to (jdbc.queryForObject("SELECT count(*) FROM projects", Long::class.java) ?: 0L),
         "running" to (jdbc.queryForObject("SELECT count(*) FROM builds WHERE status IN ('RUNNING', 'CANCEL_REQUESTED')", Long::class.java) ?: 0L),
@@ -22,7 +24,7 @@ class QueueStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemp
         rs.getString("recipe"), BuildStatus.valueOf(rs.getString("status")),
         rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("started_at")?.toInstant(),
         rs.getTimestamp("finished_at")?.toInstant(), rs.getString("message"),
-        rs.getString("repository")?.let { SourceSnapshot(it, rs.getString("source_ref"), rs.getString("commit_sha"), rs.getString("build_command"), rs.getString("artifact_path")) },
+        rs.getString("repository")?.let { SourceSnapshot(it, rs.getString("source_ref"), rs.getString("commit_sha"), rs.getString("build_command"), rs.getString("artifact_path"), rs.getString("yaml_recipe")?.let { yaml -> mapper.readValue(yaml, YamlRecipe::class.java) }) },
         rs.getString("image_reference")?.let { PublishedImage(it, rs.getString("artifact_sha256"), rs.getLong("artifact_size")) }
     )
 
@@ -68,9 +70,9 @@ class QueueStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemp
         val id = UUID.randomUUID()
         if (jdbc.queryForObject("SELECT count(*) FROM projects WHERE id = ?", Long::class.java, project) == 0L) throw MissingResource()
         val inserted = jdbc.update("""
-            INSERT INTO builds(id, project_id, request_id, recipe, repository, source_ref, commit_sha, build_command, artifact_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO builds(id, project_id, request_id, recipe, repository, source_ref, commit_sha, build_command, artifact_path, yaml_recipe) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
             ON CONFLICT (request_id) DO NOTHING
-        """.trimIndent(), id, project, request, if (source == null) "JAVA_EXAMPLE_V1" else "REPOSITORY_V1", source?.repository, source?.ref, source?.sha, source?.command, source?.artifactPath)
+        """.trimIndent(), id, project, request, if (source == null) "JAVA_EXAMPLE_V1" else "REPOSITORY_V1", source?.repository, source?.ref, source?.sha, source?.command, source?.artifactPath, source?.yamlRecipe?.let(mapper::writeValueAsString))
         val result = jdbc.query("SELECT * FROM builds WHERE request_id = ?", { rs, _ -> build(rs) }, request).single()
         if (result.projectId != project) throw Conflict("Этот идентификатор запуска уже использован другим проектом")
         if (inserted == 1) (if (source == null) listOf("Компиляция", "Тесты", "Упаковка JAR") else listOf("Исходники GitHub", "Сборка и тесты") + (if (source.artifactPath != null) listOf("Сохранение JAR", "Docker-образ", "Публикация образа") else emptyList())).forEachIndexed { index, name ->

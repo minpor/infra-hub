@@ -16,7 +16,7 @@ data class NewBuild(
     @field:Size(max = 2000) val command: String = "sh ./gradlew --no-daemon build",
     @field:Size(max = 300) val artifactPath: String? = null
 )
-data class SourceSnapshot(val repository: String, val ref: String, val sha: String, val command: String, val artifactPath: String? = null)
+data class SourceSnapshot(val repository: String, val ref: String, val sha: String, val command: String, val artifactPath: String? = null, val yamlRecipe: YamlRecipe? = null)
 enum class BuildStatus { QUEUED, RUNNING, CANCEL_REQUESTED, SUCCEEDED, FAILED, CANCELLED, INTERRUPTED }
 data class Build(
     val id: UUID,

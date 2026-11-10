@@ -15,7 +15,7 @@ import kotlin.io.path.deleteIfExists
 @Component
 @Profile("deployer")
 class DeploymentRunner(
-    private val store: DeploymentStore, private val queue: QueueStore, private val servers: ServerService, private val ssh: SshTransport, private val mapper: ObjectMapper, private val android: AndroidPublisher,
+    private val store: DeploymentStore, private val queue: QueueStore, private val servers: ServerService, private val ssh: SshTransport, private val mapper: ObjectMapper, private val android: AndroidPublisher, private val yaml: YamlDeploymentRunner,
     @param:Value("\${hub.docker-host:unix:///run/build-docker.sock}") private val dockerHost: String,
     @param:Value("\${hub.artifact-directory:/work/artifacts}") private val artifacts: String,
     @param:Value("\${hub.deploy-directory:.local/deployments}") private val root: String
@@ -46,6 +46,11 @@ class DeploymentRunner(
     private fun execute(deployment: Deployment, directory: Path) {
         val app = store.application(deployment.applicationId)
         val server = servers.get(app.serverId)
+        val execution = store.yamlExecution(deployment.id)
+        if (execution != null && execution.recipe.definition.build.artifact == null) {
+            yaml.execute(deployment, app, server, owner, null, directory, executor)
+            return
+        }
         val docker = listOf("/usr/bin/docker", "--host", dockerHost)
         var switching = false
         fun heartbeat(): BuildStatus? {
@@ -65,8 +70,8 @@ class DeploymentRunner(
         val sourceImage = mapper.readTree(Files.readString(imageFile)).first()
         var imageId = sourceImage["Id"].asText()
         require(imageId.matches(Regex("sha256:[a-f0-9]{64}")))
-        if (app.kind == "ANDROID") { android.publish(deployment, app, server, owner, imageId, directory, docker, executor); return }
-        if (app.kind == "COMPOSE") {
+        if (execution == null && app.kind == "ANDROID") { android.publish(deployment, app, server, owner, imageId, directory, docker, executor); return }
+        if (execution == null && app.kind == "COMPOSE") {
             val exportName = "infra-hub-report-${deployment.id}"
             val jar = directory.resolve("release.jar")
             run(docker + listOf("create", "--name", exportName, imageId))
@@ -99,6 +104,10 @@ class DeploymentRunner(
         require(imageId.matches(Regex("sha256:[a-f0-9]{64}")))
         log("Слои и конфигурация образа сверены; image ID целевого Docker: $imageId\n")
         archive.deleteIfExists()
+        if (execution != null) {
+            yaml.execute(deployment, app, server, owner, imageId, directory, executor)
+            return
+        }
         val payload = directory.resolve("release.json")
         Files.writeString(payload, mapper.writeValueAsString(mapOf(
             "applicationId" to app.id, "deploymentId" to deployment.id, "imageReference" to deployment.imageReference,

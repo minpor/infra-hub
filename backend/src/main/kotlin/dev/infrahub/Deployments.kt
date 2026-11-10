@@ -29,7 +29,7 @@ data class Deployment(
 )
 
 @Repository
-class DeploymentStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemplate, private val mapper: ObjectMapper) {
+class DeploymentStore(private val jdbc: JdbcTemplate, private val tx: TransactionTemplate, private val mapper: ObjectMapper, private val queue: QueueStore) {
     private fun row(rs: ResultSet) = Deployment(rs.getObject("id", UUID::class.java), rs.getObject("application_id", UUID::class.java),
         rs.getObject("build_id", UUID::class.java), rs.getString("image_reference"), rs.getString("status"), rs.getString("message"),
         rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("finished_at")?.toInstant(), rs.getTimestamp("started_at")?.toInstant(),
@@ -49,8 +49,8 @@ class DeploymentStore(private val jdbc: JdbcTemplate, private val tx: Transactio
         .fields().asSequence().associate { it.key to it.value.asText() }
     fun create(input: NewApplication): HubApplication = tx.execute {
         require(input.name.trim().length in 1..80 && input.name.none { it.isISOControl() }) { "Укажите название приложения" }
-        require(input.kind in setOf("STANDALONE", "COMPOSE", "ANDROID")) { "Неизвестный тип приложения" }
-        if (input.kind != "STANDALONE") {
+        require(input.kind in setOf("STANDALONE", "COMPOSE", "ANDROID", "SCRIPT")) { "Неизвестный тип приложения" }
+        if (input.kind in setOf("COMPOSE", "ANDROID")) {
             require(input.environment.isEmpty()) { "Секреты существующего приложения остаются на целевом сервере" }
             require(input.configuration.size <= 15 && input.configuration.values.all { it.length <= 300 && !it.any(Char::isISOControl) })
             if (input.kind == "ANDROID") {
@@ -69,7 +69,7 @@ class DeploymentStore(private val jdbc: JdbcTemplate, private val tx: Transactio
                 require(input.configuration["url"]!!.matches(Regex("https://[a-zA-Z0-9.-]+")))
             }
         }
-        require(input.hostPort in 1024..65535 && input.containerPort in 1..65535) { "Проверьте порты приложения" }
+        require((input.kind == "SCRIPT" || input.hostPort in 1024..65535) && input.containerPort in 1..65535) { "Проверьте порты приложения" }
         require(input.healthPath.length <= 200 && input.healthPath.matches(Regex("/[A-Za-z0-9/_.~,-]*"))) { "Укажите HTTP-путь проверки здоровья без адреса сервера" }
         require(input.environment.size <= 50 && input.environment.all { (key, value) ->
             key.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,79}")) && value.length <= 4096 && '\n' !in value && '\r' !in value && '\u0000' !in value
@@ -81,7 +81,7 @@ class DeploymentStore(private val jdbc: JdbcTemplate, private val tx: Transactio
             return@execute existing
         }
         if (jdbc.queryForObject("SELECT count(*) FROM projects WHERE id = ?", Long::class.java, input.projectId) != 1L) throw MissingResource()
-        if (jdbc.queryForObject("SELECT count(*) FROM servers WHERE id = ? AND host_key IS NOT NULL AND status = 'READY'", Long::class.java, input.serverId) != 1L) throw Conflict("Выберите сервер с подтверждённым SSH и Docker")
+        if (jdbc.queryForObject("SELECT count(*) FROM servers WHERE id = ? AND host_key IS NOT NULL AND (status = 'READY' OR (? AND status = 'SSH_ONLY'))", Long::class.java, input.serverId, input.kind == "SCRIPT") != 1L) throw Conflict("Выберите сервер с подтверждённым SSH и Docker")
         if (input.kind == "STANDALONE" && applications().any { it.serverId == input.serverId && it.hostPort == input.hostPort }) throw Conflict("Порт уже занят другим приложением Infra Hub")
         jdbc.update("INSERT INTO applications(id, project_id, server_id, name, host_port, container_port, health_path, environment, kind, configuration) VALUES (?,?,?,?,?,?,?,?::jsonb,?,?::jsonb)",
             input.id, input.projectId, input.serverId, input.name.trim(), if (input.kind == "STANDALONE") input.hostPort else null, input.containerPort, input.healthPath, mapper.writeValueAsString(input.environment), input.kind, mapper.writeValueAsString(input.configuration))
@@ -97,17 +97,24 @@ class DeploymentStore(private val jdbc: JdbcTemplate, private val tx: Transactio
         }
         val app = application(appId)
         if (jdbc.queryForObject("SELECT count(*) FROM deployments WHERE application_id = ? AND status IN ('QUEUED','RUNNING','CANCEL_REQUESTED','INTERRUPTED')", Long::class.java, appId) != 0L) throw Conflict("Предыдущий деплой ещё не завершён. Для прерванного запуска нажмите «Сверить и повторить»")
-        if (app.kind != "STANDALONE") {
+        if (jdbc.queryForObject("SELECT count(*) FROM builds WHERE id=? AND project_id=? AND status='SUCCEEDED'", Long::class.java, input.buildId, app.projectId) != 1L) throw Conflict("Выберите успешную сборку этого проекта с опубликованным образом")
+        val build = queue.get(input.buildId)
+        if (build.projectId != app.projectId || build.status != BuildStatus.SUCCEEDED) throw Conflict("Выберите успешную сборку этого проекта с опубликованным образом")
+        val yaml = build.source?.yamlRecipe
+        if (yaml != null) require(yaml.applicationId == appId) { "YAML build belongs to a different application" }
+        if (app.kind == "SCRIPT") require(yaml != null) { "Script applications require a YAML build" }
+        if (yaml == null && app.kind != "STANDALONE") {
             val sourceRef = jdbc.queryForObject("SELECT source_ref FROM builds WHERE id=?", String::class.java, input.buildId)
             val artifact = jdbc.queryForObject("SELECT artifact_path FROM builds WHERE id=?", String::class.java, input.buildId)
             require(if (app.kind == "ANDROID") artifact == "android-release.jar" else artifact != "android-release.jar") { "Тип артефакта не соответствует приложению" }
             require(sourceRef == app.configuration["ref"]) { "Ветка сборки не соответствует окружению приложения" }
         }
-        val reference = jdbc.query("SELECT image_reference FROM builds WHERE id = ? AND project_id = ? AND status = 'SUCCEEDED' AND image_reference IS NOT NULL", { rs, _ -> rs.getString(1) }, input.buildId, app.projectId).firstOrNull()
-            ?: throw Conflict("Выберите успешную сборку этого проекта с опубликованным образом")
-        jdbc.update("INSERT INTO deployments(id,application_id,build_id,image_reference) VALUES (?,?,?,?)", input.requestId, appId, input.buildId, reference)
+        val reference = build.image?.reference ?: if (yaml != null && yaml.definition.build.artifact == null) "source:${build.source.sha}" else throw Conflict("Выберите успешную сборку этого проекта с опубликованным образом")
+        val execution = yaml?.let { YamlExecution(it, environment(appId)) }
+        jdbc.update("INSERT INTO deployments(id,application_id,build_id,image_reference,yaml_execution) VALUES (?,?,?,?,?::jsonb)", input.requestId, appId, input.buildId, reference, execution?.let(mapper::writeValueAsString))
         get(input.requestId)
     }!!
+    fun yamlExecution(id: UUID): YamlExecution? = jdbc.queryForObject("SELECT yaml_execution::text FROM deployments WHERE id=?", String::class.java, id)?.let { mapper.readValue(it, YamlExecution::class.java) }
     fun rollback(appId: UUID, requestId: UUID): Deployment = tx.execute {
         jdbc.execute("SELECT pg_advisory_xact_lock(4821902)")
         jdbc.query("SELECT * FROM deployments WHERE id = ?", { rs, _ -> row(rs) }, requestId).firstOrNull()?.let {

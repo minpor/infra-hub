@@ -117,6 +117,7 @@ test('application configuration, digest selection, deployment history and retry'
   await page.route('**/api/deployments/release-1/retry', async route => { retried = true; await route.fulfill({ json: {} }) })
   await page.goto('/#applications')
   await page.getByRole('button', { name: '＋ Новое приложение' }).click()
+  await page.getByLabel('Способ деплоя').selectOption('STANDALONE')
   await page.getByLabel('Название приложения').fill(app.name)
   await page.getByRole('combobox', { name: 'Проект', exact: true }).selectOption(project.id)
   await page.getByRole('combobox', { name: 'Сервер приложения', exact: true }).selectOption(server.id)

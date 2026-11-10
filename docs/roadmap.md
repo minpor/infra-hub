@@ -12,7 +12,7 @@ This is a direction, not a delivery schedule. [Current capabilities](capabilitie
 
 ## Product and integrations
 
-- Complete the generic setup flow for applications and pipelines.
+- Extend YAML workflow editing/discovery and versioned schemas; multiple repository-owned workflow bindings are available.
 - Generalize project-specific Compose/Android adapters with explicit compatibility contracts.
 - Maintain English/Russian UI and documentation parity; extend diagnostic message translations.
 - Consider source provider integrations, PR checks and release metadata based on user demand.
