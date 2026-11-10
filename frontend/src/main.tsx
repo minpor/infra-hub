@@ -3,6 +3,7 @@ import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, active, csrfToken, ApiError, type Project, type Build, type Detail, type Log, type Status } from './api'
 import './style.css'
+import { compactBuildLogs } from './buildLogs'
 import { RunTiming } from './RunTiming'
 import { minutes } from './i18n'
 import { Servers } from './Servers'
@@ -18,6 +19,7 @@ function BuildView({ id, onCancel }: { id: string; onCancel: (id: string) => Pro
   useLanguage()
   const [detail, setDetail] = useState<Detail | null>(null)
   const [logs, setLogs] = useState<Log[]>([])
+  const [fullLog, setFullLog] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
@@ -50,7 +52,7 @@ function BuildView({ id, onCancel }: { id: string; onCancel: (id: string) => Pro
     {error && <p role="alert" className="error">{t(error)}</p>}
     {!detail && <p>{t("Загружаем сборку…")}</p>}
     <ol className="steps">{detail?.steps.map(step => <li key={step.position}><span className="step-number">{step.position + 1}</span><strong>{t(step.name)}</strong><Badge status={step.status}/></li>)}</ol>
-    <div className="terminal"><div className="terminal-head"><span>{t("ВЫВОД ПРОЦЕССОВ")}</span><span>live / stdout + stderr</span></div><pre aria-label={t("Логи сборки")}>{logs.length ? logs.map(log => log.text).join('') : t("Ожидаем вывод worker…")}</pre></div>
+    <div className="terminal"><div className="terminal-head"><span>{t("ВЫВОД ПРОЦЕССОВ")}</span><button className="log-mode" aria-pressed={fullLog} onClick={() => setFullLog(!fullLog)}>{fullLog ? t('Краткий журнал') : t('Полный журнал')}</button></div><pre aria-label={t("Логи сборки")}>{logs.length ? (fullLog ? logs.map(log => log.text).join('') : compactBuildLogs(logs.map(log => log.text).join(''))) : t("Ожидаем вывод worker…")}</pre></div>
     {detail?.build.source?.yamlRecipe && <div className="result"><strong>{t('Конфигурация YAML')}</strong><p><code>{detail.build.source.yamlRecipe.path}</code></p><p className="muted">SHA-256: <code>{detail.build.source.yamlRecipe.sha256}</code></p>{detail.build.source.yamlRecipe.yaml && <details><summary>{t('Просмотр YAML этой сборки')}</summary><pre className="config-preview">{detail.build.source.yamlRecipe.yaml}</pre></details>}</div>}
     {detail?.build.image && <div className="result"><strong>{t("Опубликованный образ")}</strong><p style={{ overflowWrap: 'anywhere' }}><code>{detail.build.image.reference}</code></p><p className="muted">JAR: {Math.ceil(detail.build.image.artifactSize / 1024)} KiB · SHA-256: <code style={{ overflowWrap: 'anywhere' }}>{detail.build.image.artifactSha256}</code></p></div>}
     {detail?.build.message && <p className="result" role="status">{t(detail.build.message)}</p>}

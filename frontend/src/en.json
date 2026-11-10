@@ -392,5 +392,7 @@
   "Для сохранения YAML настройте GitHub App с правом Contents: read and write.": "To save YAML, configure a GitHub App with Contents: read and write permission.",
   "Не удалось сохранить YAML. Проверьте право GitHub App Contents: read and write и правила защиты ветки.": "Could not save YAML. Check the GitHub App’s Contents: read and write permission and branch protection rules.",
   "Для сохранения выберите имя ветки, а не тег или SHA.": "To save, select a branch name rather than a tag or SHA.",
-  "Не удалось сохранить YAML (HTTP {0}). Проверьте ветку перед повтором.": "Could not save YAML (HTTP {0}). Check the branch before retrying."
+  "Не удалось сохранить YAML (HTTP {0}). Проверьте ветку перед повтором.": "Could not save YAML (HTTP {0}). Check the branch before retrying.",
+  "Краткий журнал": "Compact log",
+  "Полный журнал": "Full log"
 }
