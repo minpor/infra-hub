@@ -1,0 +1,17 @@
+name: Feature request / Предложение
+description: Describe a user or operator problem and a possible improvement.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Задача
+      description: Who needs this and what is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / Предложение
+      description: Include relevant alternatives, scope and constraints.
+    validations:
+      required: true

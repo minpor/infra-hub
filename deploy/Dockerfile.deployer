@@ -1,0 +1,7 @@
+ARG HUB_API_IMAGE=infra-hub-api:local
+FROM docker:29-cli AS cli
+FROM ${HUB_API_IMAGE}
+USER root
+COPY --from=cli /usr/local/bin/docker /usr/bin/docker
+RUN mkdir -p /work/deployments && chown 10001:10001 /work/deployments
+USER 10001:10001

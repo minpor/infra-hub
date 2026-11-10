@@ -1,0 +1,22 @@
+name: Bug report / Ошибка
+description: Report a reproducible problem without secrets.
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment / Окружение
+      description: Commit, OS/architecture, Java/Node/Docker versions and installation mode.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction / Воспроизведение
+      description: Steps, expected result and actual result. Use synthetic data.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs / Обезличенные логи
+      description: Remove keys, tokens, credentials and private infrastructure details.

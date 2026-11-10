@@ -1,0 +1,83 @@
+name: infra-hub
+services:
+  postgres:
+    image: postgres:16.15-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: infra_hub
+      POSTGRES_USER: infra_hub
+      POSTGRES_PASSWORD: ${HUB_DATABASE_PASSWORD:?Set a strong database password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infra_hub -d infra_hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    image: infra-hub-api:local
+    build:
+      context: ../artifacts
+      dockerfile: ../Dockerfile.api
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp:mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      HUB_DATABASE_URL: jdbc:postgresql://postgres:5432/infra_hub
+      HUB_DATABASE_USER: infra_hub
+      HUB_DATABASE_PASSWORD: ${HUB_DATABASE_PASSWORD:?Required}
+      HUB_GITHUB_CLIENT_ID: ${HUB_GITHUB_CLIENT_ID:?Required}
+      HUB_GITHUB_CLIENT_SECRET: ${HUB_GITHUB_CLIENT_SECRET:?Required}
+      HUB_OWNER_GITHUB_ID: ${HUB_OWNER_GITHUB_ID:?Required}
+      HUB_PUBLIC_URL: https://${HUB_DOMAIN:?Set the public domain}
+      HUB_SSH_DIRECTORY: /work/ssh
+      HUB_ARTIFACT_DIRECTORY: /work/artifacts
+    volumes:
+      - ssh_keys:/work/ssh
+      - release_artifacts:/work/artifacts:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+  worker:
+    image: infra-hub-api:local
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: ["/tmp:mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    command: ["--spring.profiles.active=worker"]
+    environment:
+      HUB_DATABASE_URL: jdbc:postgresql://postgres:5432/infra_hub
+      HUB_DATABASE_USER: infra_hub
+      HUB_DATABASE_PASSWORD: ${HUB_DATABASE_PASSWORD:?Required}
+      HUB_WORK_DIRECTORY: /work/jobs
+    volumes:
+      - worker_work:/work/jobs
+    depends_on:
+      postgres: {condition: service_healthy}
+  caddy:
+    image: infra-hub-web:local
+    build:
+      context: ../artifacts
+      dockerfile: ../Dockerfile.web
+    restart: unless-stopped
+    environment:
+      HUB_DOMAIN: ${HUB_DOMAIN:?Required}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+volumes:
+  postgres_data:
+  worker_work:
+  ssh_keys:
+  release_artifacts:
+  caddy_data:
+  caddy_config:

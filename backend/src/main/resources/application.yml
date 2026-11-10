@@ -1,0 +1,32 @@
+server:
+  address: 127.0.0.1
+  port: ${HUB_PORT:8080}
+  error:
+    include-message: never
+spring:
+  datasource:
+    url: ${HUB_DATABASE_URL:jdbc:postgresql://127.0.0.1:55432/infra_hub}
+    username: ${HUB_DATABASE_USER:infra_hub}
+    password: ${HUB_DATABASE_PASSWORD:local-development-only}
+    hikari:
+      maximum-pool-size: 4
+      connection-timeout: 3000
+      validation-timeout: 1000
+      data-source-properties:
+        connectTimeout: 3
+        socketTimeout: 5
+  jdbc:
+    template:
+      query-timeout: 3s
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+hub:
+  work-directory: ${HUB_WORK_DIRECTORY:.local/work}
+---
+spring:
+  config:
+    activate:
+      on-profile: worker
+  main:
+    web-application-type: none

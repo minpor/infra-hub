@@ -1,0 +1,26 @@
+# Opt-in overlay: docker compose -f compose.live.yaml -f compose.repositories.yaml up -d
+services:
+  api:
+    environment:
+      HUB_WORKER_SECRET: ${HUB_WORKER_SECRET:?Required}
+      HUB_GITHUB_APP_ID: ${HUB_GITHUB_APP_ID:-}
+      HUB_GITHUB_INSTALLATION_ID: ${HUB_GITHUB_INSTALLATION_ID:-}
+      HUB_GITHUB_APP_KEY_FILE: /run/github-app/private-key.pem
+    volumes:
+      - ./github-app:/run/github-app:ro
+  worker:
+    image: infra-hub-worker:local
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    group_add:
+      - ${HUB_RUNNER_SOCKET_GID:?Required}
+    environment:
+      HUB_RUNNER_ENABLED: 'true'
+      HUB_IMAGE_NAMESPACE: ${HUB_IMAGE_NAMESPACE:-}
+      HUB_RUNTIME_IMAGE: ${HUB_RUNTIME_IMAGE:-}
+      HUB_DOCKER_HOST: unix:///run/build-docker.sock
+      HUB_WORKER_API_URL: http://api:8080
+      HUB_WORKER_SECRET: ${HUB_WORKER_SECRET:?Required}
+    volumes:
+      - /run/user/${HUB_RUNNER_UID:?Required}/docker.sock:/run/build-docker.sock

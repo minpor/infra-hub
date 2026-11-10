@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16.15-bookworm
+    environment:
+      POSTGRES_DB: infra_hub_test
+      POSTGRES_USER: infra_hub
+      POSTGRES_PASSWORD: isolated-test-only
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infra_hub -d infra_hub_test"]
+      interval: 1s
+      retries: 30
+  api:
+    image: infra-hub-api:deployment-test
+    ports: ["127.0.0.1:18082:8080"]
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      HUB_DATABASE_URL: jdbc:postgresql://postgres:5432/infra_hub_test
+      HUB_DATABASE_USER: infra_hub
+      HUB_DATABASE_PASSWORD: isolated-test-only
+    depends_on:
+      postgres: {condition: service_healthy}
+  deployer:
+    image: infra-hub-deployer:deployment-test
+    command: ["--spring.profiles.active=deployer", "--spring.main.web-application-type=none"]
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    tmpfs: ["/tmp:mode=1777", "/work/deployments:uid=10001,gid=10001,mode=700"]
+    group_add: ["${HUB_RUNNER_SOCKET_GID:?Required}"]
+    environment:
+      HUB_DATABASE_URL: jdbc:postgresql://postgres:5432/infra_hub_test
+      HUB_DATABASE_USER: infra_hub
+      HUB_DATABASE_PASSWORD: isolated-test-only
+      HUB_SSH_DIRECTORY: /work/ssh
+      HUB_DEPLOY_DIRECTORY: /work/deployments
+      HUB_DOCKER_HOST: unix:///run/build-docker.sock
+    volumes:
+      - /run/user/${HUB_RUNNER_UID:?Required}/docker.sock:/run/build-docker.sock
+      - ssh_keys:/work/ssh:ro
+      - ..:/test:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+volumes:
+  ssh_keys:
+    external: true
+    name: infra-hub-panel_ssh_keys

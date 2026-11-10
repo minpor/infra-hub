@@ -1,0 +1,22 @@
+server:
+  address: 0.0.0.0
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      timeout: 8h
+      cookie:
+        secure: true
+        http-only: true
+        same-site: lax
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          github:
+            client-id: ${HUB_GITHUB_CLIENT_ID}
+            client-secret: ${HUB_GITHUB_CLIENT_SECRET}
+            scope: read:user
+            redirect-uri: ${HUB_PUBLIC_URL}/login/oauth2/code/github
+hub:
+  owner-github-id: ${HUB_OWNER_GITHUB_ID}

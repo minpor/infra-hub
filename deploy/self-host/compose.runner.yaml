@@ -1,0 +1,57 @@
+# Enable only after preparing the separate rootless daemon, builder and proxy.
+services:
+  api:
+    environment:
+      HUB_WORKER_SECRET: ${HUB_WORKER_SECRET:?At least 32 random characters}
+      HUB_GITHUB_APP_ID: ${HUB_GITHUB_APP_ID:-}
+      HUB_GITHUB_INSTALLATION_ID: ${HUB_GITHUB_INSTALLATION_ID:-}
+      HUB_GITHUB_APP_KEY_FILE: /run/github-app/private-key.pem
+    volumes:
+      - ./github-app:/run/github-app:ro
+  worker:
+    image: infra-hub-worker:local
+    build:
+      context: ..
+      dockerfile: Dockerfile.worker
+    group_add: ["${HUB_RUNNER_SOCKET_GID:?Required}"]
+    environment:
+      HUB_RUNNER_ENABLED: 'true'
+      HUB_DOCKER_HOST: unix:///run/build-docker.sock
+      HUB_WORKER_API_URL: http://api:8080
+      HUB_WORKER_SECRET: ${HUB_WORKER_SECRET:?Required}
+      HUB_IMAGE_NAMESPACE: ${HUB_IMAGE_NAMESPACE:-}
+      HUB_RUNTIME_IMAGE: ${HUB_RUNTIME_IMAGE:-}
+    volumes:
+      - /run/user/${HUB_RUNNER_UID:?Required}/docker.sock:/run/build-docker.sock
+  deployer:
+    image: infra-hub-deployer:local
+    build:
+      context: ..
+      dockerfile: Dockerfile.deployer
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: ["/tmp:mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    cpus: 1
+    group_add: ["${HUB_RUNNER_SOCKET_GID:?Required}"]
+    command: ["--spring.profiles.active=deployer", "--spring.main.web-application-type=none"]
+    environment:
+      HUB_DATABASE_URL: jdbc:postgresql://postgres:5432/infra_hub
+      HUB_DATABASE_USER: infra_hub
+      HUB_DATABASE_PASSWORD: ${HUB_DATABASE_PASSWORD:?Required}
+      HUB_DOCKER_HOST: unix:///run/build-docker.sock
+      HUB_SSH_DIRECTORY: /work/ssh
+      HUB_DEPLOY_DIRECTORY: /work/deployments
+      HUB_ARTIFACT_DIRECTORY: /work/artifacts
+    volumes:
+      - /run/user/${HUB_RUNNER_UID:?Required}/docker.sock:/run/build-docker.sock
+      - ssh_keys:/work/ssh:ro
+      - deployment_work:/work/deployments
+      - release_artifacts:/work/artifacts
+    depends_on:
+      postgres: {condition: service_healthy}
+volumes:
+  deployment_work:

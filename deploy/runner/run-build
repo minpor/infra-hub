@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+# Fail closed if rootless cgroup delegation silently disabled resource limits.
+test "$(cat /sys/fs/cgroup/memory.max)" = "${HUB_EXPECTED_MEMORY_BYTES:?Missing trusted memory limit}"
+test "$(cat /sys/fs/cgroup/pids.max)" = 512
+awk -v expected="${HUB_EXPECTED_CPUS:?Missing trusted CPU limit}" '{exit !($1 / $2 == expected)}' /sys/fs/cgroup/cpu.max
+mkdir -p /work/home /work/repository
+python3 /opt/hub/proxy-bridge.py &
+export HTTP_PROXY=http://127.0.0.1:18080 HTTPS_PROXY=http://127.0.0.1:18080
+export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY"
+export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost
+export GRADLE_USER_HOME=/work/home/gradle
+export GRADLE_OPTS='-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=18080 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=18080 -Dhttp.nonProxyHosts=localhost|127.* -Dorg.gradle.workers.max=4'
+# Parsing untrusted archive paths happens only in the disposable, networkless container.
+tar --extract --gzip --file=/work/source.tar.gz --directory=/work/repository --strip-components=1 --no-same-owner --no-same-permissions
+rm /work/source.tar.gz
+cd /work/repository
+exec sh -eu -c "$1"

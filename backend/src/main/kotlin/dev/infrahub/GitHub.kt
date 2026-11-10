@@ -1,0 +1,159 @@
+package dev.infrahub
+
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.context.annotation.Profile
+import org.springframework.stereotype.Component
+import java.net.URI
+import java.net.URLEncoder
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.nio.file.Files
+import java.nio.file.Path
+import java.security.KeyFactory
+import java.security.Signature
+import java.security.spec.PKCS8EncodedKeySpec
+import java.time.Duration
+import java.time.Instant
+import java.util.Base64
+import java.nio.ByteBuffer
+import java.util.concurrent.CompletionStage
+import java.util.concurrent.Flow
+
+fun limitedBody(limit: Int): HttpResponse.BodyHandler<ByteArray> = HttpResponse.BodyHandler {
+    val delegate = HttpResponse.BodySubscribers.ofByteArray()
+    object : HttpResponse.BodySubscriber<ByteArray> {
+        private var size = 0L
+        private lateinit var subscription: Flow.Subscription
+        override fun getBody(): CompletionStage<ByteArray> = delegate.body
+        override fun onSubscribe(value: Flow.Subscription) { subscription = value; delegate.onSubscribe(value) }
+        override fun onNext(items: List<ByteBuffer>) {
+            size += items.sumOf { it.remaining().toLong() }
+            if (size > limit) { subscription.cancel(); delegate.onError(RepositoryFailure("Архив или ответ GitHub превышает допустимый размер.")) }
+            else delegate.onNext(items)
+        }
+        override fun onError(error: Throwable) = delegate.onError(error)
+        override fun onComplete() = delegate.onComplete()
+    }
+}
+
+class RepositoryFailure(message: String) : RuntimeException(message)
+
+/** Fixed GitHub hosts, no automatic redirects and no response bodies in errors/logs. */
+@Component
+class GitHubHttp {
+    private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build()
+    fun get(uri: URI, token: String? = null, body: String? = null, limit: Int = 2 * 1024 * 1024): Pair<Int, ByteArray> {
+        require(uri.scheme == "https" && uri.host in setOf("api.github.com", "codeload.github.com") && uri.port == -1 && uri.userInfo == null)
+        val builder = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(90))
+            .header("Accept", "application/vnd.github+json").header("User-Agent", "Infra-Hub")
+        if (token != null) builder.header("Authorization", "Bearer $token")
+        if (body != null) builder.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body))
+        // ofByteArray honours the request timeout through the entire response; the subscriber also bounds memory.
+        val response = try { client.send(builder.build(), limitedBody(limit)) }
+        catch (error: Exception) { throw RepositoryFailure("Не удалось связаться с GitHub или получить ответ допустимого размера. Повторите запрос позже.") }
+        if (response.statusCode() == 302) {
+            require(uri.host == "api.github.com")
+            val target = URI.create(response.headers().firstValue("Location").orElseThrow())
+            require(target.scheme == "https" && target.host == "codeload.github.com" && target.port == -1 && target.userInfo == null)
+            // Signed archive redirect is a credential: never log it or forward the Authorization header.
+            return get(target, limit = limit)
+        }
+        return response.statusCode() to response.body()
+    }
+}
+
+@Component
+@Profile("!worker")
+class GitHub(
+    private val http: GitHubHttp,
+    private val json: ObjectMapper,
+    @param:Value("\${hub.github-app-id:}") private val appId: String,
+    @param:Value("\${hub.github-app-key-file:}") private val keyFile: String,
+    @param:Value("\${hub.github-installation-id:}") private val installationId: String
+) {
+    fun configured() = appId.isNotBlank() && keyFile.isNotBlank() && installationId.isNotBlank()
+
+    private fun jwt(): String {
+        val pem = Files.readString(Path.of(keyFile))
+        require(pem.contains("-----BEGIN PRIVATE KEY-----")) { "GitHub App requires a PKCS8 private key" }
+        val key = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(Base64.getMimeDecoder().decode(
+            pem.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
+        )))
+        val encoder = Base64.getUrlEncoder().withoutPadding()
+        val now = Instant.now().epochSecond
+        val header = encoder.encodeToString(json.writeValueAsBytes(mapOf("alg" to "RS256", "typ" to "JWT")))
+        val claims = encoder.encodeToString(json.writeValueAsBytes(mapOf("iat" to now - 60, "exp" to now + 300, "iss" to appId)))
+        val unsigned = "$header.$claims"
+        val signature = Signature.getInstance("SHA256withRSA").apply { initSign(key); update(unsigned.toByteArray()) }.sign()
+        return "$unsigned.${encoder.encodeToString(signature)}"
+    }
+
+    private fun request(path: String, token: String? = null, body: String? = null): JsonNode {
+        val (status, bytes) = http.get(URI.create("https://api.github.com$path"), token, body)
+        when (status) {
+            200, 201 -> return json.readTree(bytes)
+            404 -> throw RepositoryFailure("Репозиторий или ветка не найдены. Для приватного репозитория предоставьте GitHub App доступ к нему.")
+            409 -> throw RepositoryFailure("Репозиторий пуст: сначала нужен хотя бы один commit.")
+            401, 403, 422 -> throw RepositoryFailure("GitHub не разрешил доступ. Проверьте установку приложения, выбранные репозитории и лимит запросов.")
+            else -> throw RepositoryFailure("GitHub временно недоступен (HTTP $status). Повторите запрос позже.")
+        }
+    }
+
+    private fun token(repository: String): String? {
+        if (!configured()) return null
+        // Public repositories don't require installation membership or private credentials.
+        if (http.get(URI.create("https://api.github.com/repos/$repository")).first == 200) return null
+        require(installationId.matches(Regex("[0-9]+")))
+        // Check the app's installation belongs to this repository before issuing a narrowly scoped token.
+        val jwt = jwt()
+        val actual = request("/repos/$repository/installation", jwt)["id"].asText()
+        if (actual != installationId) throw RepositoryFailure("Репозиторий не входит в настроенную установку GitHub App.")
+        return request("/app/installations/$installationId/access_tokens", jwt,
+            json.writeValueAsString(mapOf("repositories" to listOf(repository.substringAfter('/')), "permissions" to mapOf("contents" to "read"))))["token"].asText()
+    }
+
+    fun resolve(url: String, ref: String, command: String): SourceSnapshot {
+        val repository = repositoryName(url)
+        require(ref.isNotBlank() && ref.length <= 200 && !ref.any { it.isISOControl() }) { "Укажите ветку, тег или SHA" }
+        require(command.isNotBlank() && command.length <= 2000 && !command.contains('\u0000')) { "Укажите команду сборки (до 2000 символов)" }
+        val token = token(repository)
+        val metadata = request("/repos/$repository", token)
+        val selected = if (ref == "HEAD") metadata["default_branch"].asText() else ref
+        val sha = request("/repos/$repository/commits/${URLEncoder.encode(selected, Charsets.UTF_8).replace("+", "%20")}", token)["sha"].asText()
+        check(sha.matches(Regex("[0-9a-f]{40}")))
+        return SourceSnapshot(repository, selected, sha, command)
+    }
+
+    fun file(source: SourceSnapshot, path: String): ByteArray {
+        require(path.matches(Regex("[A-Za-z0-9_./-]+")) && ".." !in path)
+        val node = request("/repos/${source.repository}/contents/$path?ref=${source.sha}", token(source.repository))
+        require(node["encoding"].asText() == "base64")
+        return Base64.getMimeDecoder().decode(node["content"].asText())
+    }
+
+    fun directorySha(source: SourceSnapshot, path: String): String {
+        require(path.matches(Regex("[A-Za-z0-9_-]+")))
+        val tree = request("/repos/${source.repository}/git/trees/${source.sha}", token(source.repository))["tree"]
+        return tree.first { it["path"].asText() == path && it["type"].asText() == "tree" }["sha"].asText()
+    }
+
+    fun archive(source: SourceSnapshot): ByteArray {
+        val token = token(source.repository) // Revalidate access at execution time, including revocation.
+        val (status, bytes) = http.get(URI.create("https://api.github.com/repos/${source.repository}/tarball/${source.sha}"), token, limit = 32 * 1024 * 1024)
+        if (status != 200) throw RepositoryFailure("Не удалось получить исходники: проверьте доступ GitHub App к репозиторию (HTTP $status).")
+        return bytes
+    }
+
+    companion object {
+        fun repositoryName(url: String): String {
+            val normalized = url.trim().removePrefix("git@github.com:").removePrefix("https://github.com/").removeSuffix(".git")
+            require(normalized.matches(Regex("[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+")) && normalized.substringAfter('/') !in setOf(".", "..")) {
+                "Укажите репозиторий GitHub: https://github.com/owner/repository"
+            }
+            return normalized
+        }
+    }
+}

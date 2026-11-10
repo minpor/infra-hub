@@ -1,0 +1,21 @@
+{$HUB_DOMAIN} {
+    encode zstd gzip
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        Strict-Transport-Security "max-age=31536000"
+    }
+    @backend path /api/* /oauth2/* /login/* /logout /mcp /mcp/*
+    handle @backend {
+        reverse_proxy api:8080
+    }
+    # Internal source delivery is never exposed through the public proxy.
+    handle /internal/* {
+        respond 404
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

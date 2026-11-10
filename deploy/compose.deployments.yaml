@@ -1,0 +1,41 @@
+# Optional dedicated executor. API stays without Docker socket; repository worker stays without SSH keys.
+services:
+  api:
+    environment:
+      HUB_ARTIFACT_DIRECTORY: /work/artifacts
+    volumes:
+      - release_artifacts:/work/artifacts:ro
+  deployer:
+    image: infra-hub-deployer:local
+    build:
+      context: .
+      dockerfile: Dockerfile.deployer
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: ["/tmp:mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    cpus: 1
+    group_add: ["${HUB_RUNNER_SOCKET_GID:?Required}"]
+    command: ["--spring.profiles.active=deployer", "--spring.main.web-application-type=none"]
+    environment:
+      HUB_DATABASE_URL: jdbc:postgresql://postgres:5432/infra_hub
+      HUB_DATABASE_USER: infra_hub
+      HUB_DATABASE_PASSWORD: ${HUB_DATABASE_PASSWORD:?Required}
+      HUB_SSH_DIRECTORY: /work/ssh
+      HUB_DOCKER_HOST: unix:///run/build-docker.sock
+      HUB_DEPLOY_DIRECTORY: /work/deployments
+    volumes:
+      - /run/user/${HUB_RUNNER_UID:?Required}/docker.sock:/run/build-docker.sock
+      - ssh_keys:/work/ssh:ro
+      - deployment_work:/work/deployments
+      - release_artifacts:/work/artifacts
+      - /opt/infra-hub/toolchains/android-sdk:/opt/android-sdk:ro
+      - /opt/infra-hub/secrets/android:/run/android-signing:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+volumes:
+  release_artifacts:
+  deployment_work:

@@ -1,0 +1,15 @@
+# Run with the SAME rootless Docker daemon as the build runner.
+name: infra-hub-registry
+services:
+  registry:
+    image: registry@sha256:38907510915c3f1604c7e83d6ab602ab3020d092f73bdaed8696773693ff768c
+    restart: unless-stopped
+    ports: ["127.0.0.1:5000:5000"]
+    mem_limit: 256m
+    cpus: 1
+    pids_limit: 128
+    environment:
+      OTEL_TRACES_EXPORTER: none
+    volumes: ["registry_data:/var/lib/registry"]
+volumes:
+  registry_data:

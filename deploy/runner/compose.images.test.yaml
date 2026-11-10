@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16.15-bookworm
+    environment:
+      POSTGRES_DB: infra_hub_test
+      POSTGRES_USER: infra_hub
+      POSTGRES_PASSWORD: isolated-test-only
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infra_hub -d infra_hub_test"]
+      interval: 1s
+      retries: 30
+  source:
+    image: python:3.12-alpine
+    command: ["python3", "/fixture/fixture-source.py"]
+    read_only: true
+    volumes:
+      - ./fixture-source.py:/fixture/fixture-source.py:ro
+      - ../fixture-source.tar.gz:/fixture/source.tar.gz:ro
+  worker:
+    image: infra-hub-worker:image-test
+    command: ["--spring.profiles.active=worker"]
+    read_only: true
+    init: true
+    tmpfs:
+      - /tmp:mode=1777
+      - /work/jobs:uid=10001,gid=10001,mode=700
+    group_add: ["${HUB_RUNNER_SOCKET_GID:?Required}"]
+    environment:
+      HUB_DATABASE_URL: jdbc:postgresql://postgres:5432/infra_hub_test
+      HUB_DATABASE_USER: infra_hub
+      HUB_DATABASE_PASSWORD: isolated-test-only
+      HUB_WORK_DIRECTORY: /work/jobs
+      HUB_WORKER_API_URL: http://source:8080
+      HUB_WORKER_SECRET: isolated-repository-test-secret-32
+      HUB_RUNNER_ENABLED: 'true'
+      HUB_RUNNER_JOB_LABEL: dev.infrahub.image-test.job
+      HUB_IMAGE_NAMESPACE: localhost:15000/infra-hub
+      HUB_RUNTIME_IMAGE: ${HUB_RUNTIME_IMAGE:?Required}
+      HUB_DOCKER_HOST: unix:///run/build-docker.sock
+    volumes:
+      - /run/user/${HUB_RUNNER_UID:?Required}/docker.sock:/run/build-docker.sock
+    depends_on:
+      postgres: {condition: service_healthy}

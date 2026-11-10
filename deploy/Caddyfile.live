@@ -1,0 +1,17 @@
+infra-hub.minpor.ru {
+    encode zstd gzip
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+    @backend path /api/* /oauth2/* /login/* /logout /mcp /mcp/*
+    handle @backend {
+        reverse_proxy api:8080
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}
