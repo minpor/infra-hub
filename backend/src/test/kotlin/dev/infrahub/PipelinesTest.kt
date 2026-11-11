@@ -147,7 +147,7 @@ class PipelinesTest @Autowired constructor(private val pipelines: PipelineServic
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["FAILED", "CANCELLED"])
+    @ValueSource(strings = ["SUCCEEDED", "FAILED", "CANCELLED"])
     fun `new explicit native release retries a terminal deployment while the old request remains idempotent`(status: String) {
         val id = UUID.randomUUID()
         pipelines.create(NewPipeline(id, app.id, "main", "build", "app.jar", environment = "prod"))

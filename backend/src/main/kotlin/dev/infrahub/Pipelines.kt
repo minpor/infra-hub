@@ -162,7 +162,8 @@ class PipelineService(private val jdbc: JdbcTemplate, private val tx: Transactio
             val deployment = (p["deployment_id"] as UUID?)?.let(deployments::get)
             val previousCommand = active?.source?.command?.replace(Regex("^export HUB_ANDROID_CODE=[0-9]+; "), "")
             val sameRecipe = previousCommand == source.command && active?.source?.artifactPath == source.artifactPath && active?.source?.yamlRecipe?.path == source.yamlRecipe?.path
-            if (sameRecipe && active?.source?.sha == source.sha && active.status in setOf(BuildStatus.QUEUED, BuildStatus.RUNNING, BuildStatus.SUCCEEDED) && !((source.yamlRecipe != null || retryTerminalDeployment) && deployment?.status in setOf("FAILED", "CANCELLED"))) {
+            val completedExplicitRelease = retryTerminalDeployment && deployment?.status == "SUCCEEDED"
+            if (!completedExplicitRelease && sameRecipe && active?.source?.sha == source.sha && active.status in setOf(BuildStatus.QUEUED, BuildStatus.RUNNING, BuildStatus.SUCCEEDED) && !((source.yamlRecipe != null || retryTerminalDeployment) && deployment?.status in setOf("FAILED", "CANCELLED"))) {
                 if (deployment?.status == "CANCELLED") throw Conflict("Этот выпуск отменён; для повторной выкладки используйте deploy_build с новым request_id")
                 jdbc.update("UPDATE pipelines SET release_requested=true WHERE id=?", id)
                 return@execute active
